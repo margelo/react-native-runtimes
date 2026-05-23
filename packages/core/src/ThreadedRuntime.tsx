@@ -114,6 +114,39 @@ function currentRuntimeName() {
   );
 }
 
+export const MAIN_RUNTIME_NAME = 'main';
+
+export type CurrentRuntimeInfo = {
+  isMain: boolean;
+  name: string;
+  kind: string | null;
+};
+
+export function getCurrentRuntime(): CurrentRuntimeInfo {
+  const globals = globalThis as {
+    __THREADED_RUNTIME_ENV__?: { runtimeName?: string; kind?: string };
+    __COMPOSE_CHAT_LIST_ENV__?: { runtimeName?: string; kind?: string };
+  };
+  const env =
+    globals.__THREADED_RUNTIME_ENV__ ?? globals.__COMPOSE_CHAT_LIST_ENV__;
+  if (env?.runtimeName) {
+    return {
+      isMain: false,
+      name: env.runtimeName,
+      kind: env.kind ?? null,
+    };
+  }
+  return { isMain: true, name: MAIN_RUNTIME_NAME, kind: null };
+}
+
+export function getCurrentRuntimeName(): string {
+  return getCurrentRuntime().name;
+}
+
+export function isMainRuntime(): boolean {
+  return getCurrentRuntime().isMain;
+}
+
 function getRuntimeFunctionsNitro() {
   if (runtimeFunctionsNitro !== undefined) {
     return runtimeFunctionsNitro;

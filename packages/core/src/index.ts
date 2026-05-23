@@ -1,5 +1,9 @@
 export {
   call,
+  getCurrentRuntime,
+  getCurrentRuntimeName,
+  isMainRuntime,
+  MAIN_RUNTIME_NAME,
   registerLazyThreadedComponent,
   registerRuntimeFunction,
   registerThreadedHeadlessTask,
@@ -13,6 +17,7 @@ export {
   ThreadedRuntimeHost,
   ThreadedScreen,
   usingRuntime,
+  type CurrentRuntimeInfo,
   type ThreadedHeadlessTaskContext,
   type ThreadedHeadlessTask,
   type ThreadedHeadlessTaskOptions,
