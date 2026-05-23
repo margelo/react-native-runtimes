@@ -51,6 +51,13 @@ import {
   type FibonacciResult,
 } from './src/examples/fibonacciRuntimeFunction';
 import {
+  clampHeavyInput,
+  heavyWorkload,
+  runHeavyWorkloadSync,
+  HEAVY_WORKLOAD_MAX_N,
+  HEAVY_WORKLOAD_MIN_N,
+} from './src/examples/heavyWorkloadRuntimeFunction';
+import {
   requestTwoRuntimeBusinessSync,
   startTwoRuntimeBusinessRuntime,
   twoRuntimeArchitectureStore,
@@ -68,6 +75,7 @@ type SharedRuntimeMode =
   | 'shared-tree'
   | 'poke-shared'
   | 'fibonacci-runtime'
+  | 'runtime-bench'
   | 'two-runtimes-architecture'
   | 'threaded-chat-screen'
   | 'threaded-chat-app';
@@ -253,6 +261,15 @@ const APP_LAUNCH_SECTIONS: AppLaunchSection[] = [
           'Main RN awaits a typed function running on a named runtime.',
         runtime: 'Main caller + worker RN',
         workload: 'Awaitable compute',
+      },
+      {
+        mode: 'runtime-bench',
+        title: 'Runtime Benchmark',
+        eyebrow: 'Jank meter',
+        description:
+          'Plot frame jank live while the same heavy JS runs on the main runtime vs a worker runtime.',
+        runtime: 'Main meter + worker RN',
+        workload: 'Heavy compute',
       },
       {
         mode: 'two-runtimes-architecture',
@@ -543,6 +560,10 @@ function AppRouteContent({
 
   if (mode === 'fibonacci-runtime') {
     return <FibonacciRuntimeFunctionScreen />;
+  }
+
+  if (mode === 'runtime-bench') {
+    return <RuntimeBenchmarkScreen />;
   }
 
   if (mode === 'threaded-chat-screen') {
@@ -1109,6 +1130,717 @@ function FibonacciRuntimeFunctionScreen() {
     </View>
   );
 }
+
+const BENCH_RUNTIME_NAME = 'runtime-benchmark-worker';
+const BENCH_FRAME_BUDGET_MS = 1000 / 60;
+const BENCH_SAMPLE_COUNT = 56;
+const BENCH_CHART_HEIGHT = 132;
+const BENCH_CHART_MAX_MS = 120;
+const BENCH_RUN_TAIL_MS = 800;
+
+type BenchTarget = 'main' | 'worker';
+type BenchRun = {
+  id: number;
+  target: BenchTarget;
+  n: number;
+  durationMs: number;
+  maxFrameMs: number;
+  droppedFrames: number;
+};
+type ActiveBenchRun = {
+  target: BenchTarget;
+  n: number;
+  maxFrameMs: number;
+  droppedFrames: number;
+};
+
+function benchJankColor(frameMs: number): string {
+  if (frameMs <= BENCH_FRAME_BUDGET_MS * 1.5) {
+    return '#16A34A';
+  }
+  if (frameMs <= BENCH_FRAME_BUDGET_MS * 3) {
+    return '#F59E0B';
+  }
+  return '#DC2626';
+}
+
+function BenchLegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <View style={benchStyles.legendItem}>
+      <View style={[benchStyles.legendDot, { backgroundColor: color }]} />
+      <Text style={benchStyles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
+function BenchButton({
+  id,
+  label,
+  hint,
+  tone,
+  disabled,
+  onPress,
+}: {
+  id: string;
+  label: string;
+  hint: string;
+  tone: BenchTarget;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={id}
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        benchStyles.runButton,
+        tone === 'main'
+          ? benchStyles.runButtonMain
+          : benchStyles.runButtonWorker,
+        disabled && benchStyles.runButtonDisabled,
+      ]}
+      testID={id}
+    >
+      <Text style={benchStyles.runButtonLabel}>{label}</Text>
+      <Text style={benchStyles.runButtonHint}>{hint}</Text>
+    </Pressable>
+  );
+}
+
+function BenchJankChart({ samples }: { samples: number[] }) {
+  const budgetBottom =
+    (BENCH_FRAME_BUDGET_MS / BENCH_CHART_MAX_MS) * BENCH_CHART_HEIGHT;
+  return (
+    <View style={benchStyles.chart} testID="runtime-bench-chart">
+      <View style={benchStyles.chartPlot}>
+        <View
+          style={[benchStyles.chartBudgetLine, { bottom: budgetBottom }]}
+        />
+        {samples.map((value, index) => {
+          const clamped = Math.min(value, BENCH_CHART_MAX_MS);
+          const height = Math.max(
+            2,
+            (clamped / BENCH_CHART_MAX_MS) * BENCH_CHART_HEIGHT,
+          );
+          return (
+            <View
+              key={index}
+              style={[
+                benchStyles.chartBar,
+                { backgroundColor: benchJankColor(value), height },
+              ]}
+            />
+          );
+        })}
+      </View>
+      <Text style={benchStyles.chartCaption}>
+        frame interval, oldest left / lower is smoother / line = 60fps budget
+        (16.7ms)
+      </Text>
+    </View>
+  );
+}
+
+function BenchRunHistory({ runs }: { runs: BenchRun[] }) {
+  if (runs.length === 0) {
+    return (
+      <Text style={benchStyles.historyEmpty}>
+        No runs yet. Trigger a run on either runtime to record a row.
+      </Text>
+    );
+  }
+  return (
+    <View style={benchStyles.historyTable} testID="runtime-bench-history">
+      <View style={[benchStyles.historyRow, benchStyles.historyHeadRow]}>
+        <Text
+          style={[
+            benchStyles.historyCell,
+            benchStyles.cellRun,
+            benchStyles.historyHead,
+          ]}
+        >
+          run
+        </Text>
+        <Text
+          style={[
+            benchStyles.historyCell,
+            benchStyles.cellWhere,
+            benchStyles.historyHead,
+          ]}
+        >
+          where
+        </Text>
+        <Text
+          style={[
+            benchStyles.historyCell,
+            benchStyles.cellNum,
+            benchStyles.historyHead,
+          ]}
+        >
+          n
+        </Text>
+        <Text
+          style={[
+            benchStyles.historyCell,
+            benchStyles.cellWide,
+            benchStyles.historyHead,
+          ]}
+        >
+          compute
+        </Text>
+        <Text
+          style={[
+            benchStyles.historyCell,
+            benchStyles.cellWide,
+            benchStyles.historyHead,
+          ]}
+        >
+          max frame
+        </Text>
+        <Text
+          style={[
+            benchStyles.historyCell,
+            benchStyles.cellNum,
+            benchStyles.historyHead,
+          ]}
+        >
+          drop
+        </Text>
+      </View>
+      {runs.map(run => (
+        <View key={run.id} style={benchStyles.historyRow}>
+          <Text style={[benchStyles.historyCell, benchStyles.cellRun]}>
+            #{run.id}
+          </Text>
+          <Text
+            style={[
+              benchStyles.historyCell,
+              benchStyles.cellWhere,
+              run.target === 'main'
+                ? benchStyles.whereMain
+                : benchStyles.whereWorker,
+            ]}
+          >
+            {run.target}
+          </Text>
+          <Text style={[benchStyles.historyCell, benchStyles.cellNum]}>
+            {run.n}
+          </Text>
+          <Text style={[benchStyles.historyCell, benchStyles.cellWide]}>
+            {run.durationMs}ms
+          </Text>
+          <Text style={[benchStyles.historyCell, benchStyles.cellWide]}>
+            {run.maxFrameMs}ms
+          </Text>
+          <Text style={[benchStyles.historyCell, benchStyles.cellNum]}>
+            {run.droppedFrames}
+          </Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function RuntimeBenchmarkScreen() {
+  const [samples, setSamples] = useState<number[]>(() =>
+    Array.from({ length: BENCH_SAMPLE_COUNT }, () => BENCH_FRAME_BUDGET_MS),
+  );
+  const [spinTick, setSpinTick] = useState(0);
+  const [n, setN] = useState(36);
+  const [busy, setBusy] = useState<BenchTarget | null>(null);
+  const [liveStatus, setLiveStatus] = useState(
+    'Sampling the main runtime at 60fps.',
+  );
+  const [runs, setRuns] = useState<BenchRun[]>([]);
+
+  const samplesRef = useRef(samples);
+  const runRef = useRef<ActiveBenchRun | null>(null);
+  const runIdRef = useRef(0);
+  const mountedRef = useRef(true);
+  const timeoutsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+
+  const schedule = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timeoutsRef.current = timeoutsRef.current.filter(item => item !== id);
+      if (mountedRef.current) {
+        fn();
+      }
+    }, ms);
+    timeoutsRef.current.push(id);
+  }, []);
+
+  // Frame sampler. This runs on the MAIN runtime: each animation frame records
+  // the gap since the previous frame. ~16.7ms means smooth; a blocked main
+  // thread produces one large gap, which is exactly the jank we plot.
+  useEffect(() => {
+    mountedRef.current = true;
+    let rafId = 0;
+    let lastFrameAt = Date.now();
+
+    function onFrame() {
+      const now = Date.now();
+      const delta = now - lastFrameAt;
+      lastFrameAt = now;
+
+      const next = samplesRef.current.slice(1);
+      next.push(delta);
+      samplesRef.current = next;
+      setSamples(next);
+      setSpinTick(value => (value + 1) % 40);
+
+      const activeRun = runRef.current;
+      if (activeRun) {
+        activeRun.maxFrameMs = Math.max(activeRun.maxFrameMs, delta);
+        activeRun.droppedFrames += Math.max(
+          0,
+          Math.round(delta / BENCH_FRAME_BUDGET_MS) - 1,
+        );
+      }
+
+      rafId = requestAnimationFrame(onFrame);
+    }
+
+    rafId = requestAnimationFrame(onFrame);
+
+    return () => {
+      mountedRef.current = false;
+      cancelAnimationFrame(rafId);
+      timeoutsRef.current.forEach(clearTimeout);
+      timeoutsRef.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    void ThreadedRuntime.prewarm(BENCH_RUNTIME_NAME);
+  }, []);
+
+  const stats = useMemo(() => {
+    const recent = samples.slice(-24);
+    const avg =
+      recent.reduce((sum, value) => sum + value, 0) /
+      Math.max(recent.length, 1);
+    return {
+      fps: Math.max(1, Math.min(60, Math.round(1000 / Math.max(avg, 1)))),
+      currentMs: Math.round(samples[samples.length - 1] ?? 0),
+      worstMs: Math.round(Math.max(...samples)),
+    };
+  }, [samples]);
+
+  const beginRun = useCallback(
+    (target: BenchTarget) => {
+      runRef.current = { target, n, maxFrameMs: 0, droppedFrames: 0 };
+      setBusy(target);
+      setLiveStatus(
+        target === 'main'
+          ? 'Heavy JS on the MAIN runtime - the meter above should freeze.'
+          : 'Heavy JS on the WORKER runtime - the meter above should stay smooth.',
+      );
+    },
+    [n],
+  );
+
+  const finishRun = useCallback(
+    (durationMs: number) => {
+      // Keep attributing frames to this run for a short tail so the main
+      // runtime's post-block recovery spike lands before we snapshot.
+      schedule(() => {
+        const active = runRef.current;
+        runRef.current = null;
+        if (active) {
+          runIdRef.current += 1;
+          const run: BenchRun = {
+            id: runIdRef.current,
+            target: active.target,
+            n: active.n,
+            durationMs,
+            maxFrameMs: Math.round(active.maxFrameMs),
+            droppedFrames: active.droppedFrames,
+          };
+          setRuns(prev => [run, ...prev].slice(0, 8));
+        }
+        setBusy(null);
+        setLiveStatus('Sampling the main runtime at 60fps.');
+      }, BENCH_RUN_TAIL_MS);
+    },
+    [schedule],
+  );
+
+  const runOnMain = useCallback(() => {
+    if (busy) {
+      return;
+    }
+    beginRun('main');
+    // Defer one paint so the status banner and stalled spinner render before
+    // the heavy call freezes the main runtime mid-spin.
+    schedule(() => {
+      const result = runHeavyWorkloadSync(n);
+      finishRun(result.durationMs);
+    }, 90);
+  }, [beginRun, busy, finishRun, n, schedule]);
+
+  const runOnWorker = useCallback(() => {
+    if (busy) {
+      return;
+    }
+    beginRun('worker');
+    void call(heavyWorkload)
+      .on(BENCH_RUNTIME_NAME)(n)
+      .then(result => {
+        finishRun(result.durationMs);
+      })
+      .catch(error => {
+        runRef.current = null;
+        setBusy(null);
+        setLiveStatus(
+          `Worker run failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+  }, [beginRun, busy, finishRun, n]);
+
+  const spinnerAngle = `${(spinTick * 9) % 360}deg`;
+
+  return (
+    <ScrollView
+      accessibilityLabel="runtime-bench-screen"
+      contentContainerStyle={benchStyles.content}
+      style={benchStyles.screen}
+      testID="runtime-bench-screen"
+    >
+      <View style={styles.header}>
+        <Text style={styles.title}>Runtime benchmark</Text>
+        <Text style={styles.subtitle}>
+          The live meter below is driven by the main runtime. Run the same
+          heavy workload on the main runtime vs a worker runtime and watch the
+          jank chart and numbers.
+        </Text>
+      </View>
+
+      <View style={benchStyles.meterCard}>
+        <View style={benchStyles.meterTop}>
+          <View
+            style={[
+              benchStyles.spinner,
+              busy === 'main' && benchStyles.spinnerStalled,
+              { transform: [{ rotate: spinnerAngle }] },
+            ]}
+          >
+            <View style={benchStyles.spinnerArm} />
+          </View>
+          <View style={benchStyles.meterReadout}>
+            <Text style={benchStyles.meterFps}>{stats.fps} fps</Text>
+            <Text style={benchStyles.meterDetail}>
+              last frame {stats.currentMs}ms / worst {stats.worstMs}ms
+            </Text>
+          </View>
+        </View>
+        <Text
+          style={[
+            benchStyles.statusBanner,
+            busy === 'main' && benchStyles.statusBannerMain,
+            busy === 'worker' && benchStyles.statusBannerWorker,
+          ]}
+        >
+          {liveStatus}
+        </Text>
+      </View>
+
+      <BenchJankChart samples={samples} />
+      <View style={benchStyles.legendRow}>
+        <BenchLegendDot color="#16A34A" label="smooth" />
+        <BenchLegendDot color="#F59E0B" label="slow frame" />
+        <BenchLegendDot color="#DC2626" label="dropped frames" />
+      </View>
+
+      <View style={benchStyles.inputRow}>
+        <Text style={benchStyles.inputLabel}>workload</Text>
+        <ActionButton
+          id="runtime-bench-decrement"
+          label="-"
+          onPress={() => setN(value => clampHeavyInput(value - 1))}
+        />
+        <View style={benchStyles.inputValueBox}>
+          <Text style={benchStyles.inputValue}>fib({n})</Text>
+          <Text style={benchStyles.inputRange}>
+            {HEAVY_WORKLOAD_MIN_N}-{HEAVY_WORKLOAD_MAX_N} / higher is heavier
+          </Text>
+        </View>
+        <ActionButton
+          id="runtime-bench-increment"
+          label="+"
+          onPress={() => setN(value => clampHeavyInput(value + 1))}
+        />
+      </View>
+
+      <View style={benchStyles.runRow}>
+        <BenchButton
+          disabled={busy !== null}
+          hint="blocks this runtime"
+          id="runtime-bench-run-main"
+          label="Run on MAIN"
+          onPress={runOnMain}
+          tone="main"
+        />
+        <BenchButton
+          disabled={busy !== null}
+          hint="offloaded runtime"
+          id="runtime-bench-run-worker"
+          label="Run on WORKER"
+          onPress={runOnWorker}
+          tone="worker"
+        />
+      </View>
+
+      <Text style={benchStyles.sectionTitle}>Run history</Text>
+      <BenchRunHistory runs={runs} />
+    </ScrollView>
+  );
+}
+
+const benchStyles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
+  content: {
+    padding: 14,
+    paddingBottom: 28,
+    rowGap: 12,
+  },
+  meterCard: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 12,
+    rowGap: 10,
+  },
+  meterTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 14,
+  },
+  spinner: {
+    alignItems: 'center',
+    borderColor: '#16A34A',
+    borderRadius: 22,
+    borderWidth: 3,
+    height: 44,
+    justifyContent: 'flex-start',
+    width: 44,
+  },
+  spinnerStalled: {
+    borderColor: '#DC2626',
+  },
+  spinnerArm: {
+    backgroundColor: '#111827',
+    borderRadius: 2,
+    height: 15,
+    marginTop: 3,
+    width: 4,
+  },
+  meterReadout: {
+    flex: 1,
+  },
+  meterFps: {
+    color: '#111827',
+    fontSize: 26,
+    fontWeight: '800',
+  },
+  meterDetail: {
+    color: '#6B7280',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  statusBanner: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 8,
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '600',
+    overflow: 'hidden',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  statusBannerMain: {
+    backgroundColor: '#FEE2E2',
+    color: '#991B1B',
+  },
+  statusBannerWorker: {
+    backgroundColor: '#DCFCE7',
+    color: '#166534',
+  },
+  chart: {
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    padding: 12,
+    rowGap: 8,
+  },
+  chartPlot: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    height: BENCH_CHART_HEIGHT,
+  },
+  chartBudgetLine: {
+    backgroundColor: 'rgba(148, 163, 184, 0.5)',
+    height: 1,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  chartBar: {
+    borderTopLeftRadius: 2,
+    borderTopRightRadius: 2,
+    flex: 1,
+    marginHorizontal: 0.75,
+  },
+  chartCaption: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  legendRow: {
+    flexDirection: 'row',
+    gap: 16,
+    justifyContent: 'center',
+  },
+  legendItem: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+  },
+  legendDot: {
+    borderRadius: 5,
+    height: 10,
+    width: 10,
+  },
+  legendText: {
+    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  inputRow: {
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    gap: 12,
+    padding: 10,
+  },
+  inputLabel: {
+    color: '#6B7280',
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  inputValueBox: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  inputValue: {
+    color: '#111827',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  inputRange: {
+    color: '#9CA3AF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  runRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  runButton: {
+    borderRadius: 10,
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  runButtonMain: {
+    backgroundColor: '#B91C1C',
+  },
+  runButtonWorker: {
+    backgroundColor: '#15803D',
+  },
+  runButtonDisabled: {
+    opacity: 0.45,
+  },
+  runButtonLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  runButtonHint: {
+    color: 'rgba(255, 255, 255, 0.82)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  sectionTitle: {
+    color: '#111827',
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  historyEmpty: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    paddingVertical: 8,
+  },
+  historyTable: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  historyRow: {
+    borderTopColor: '#F1F5F9',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  historyHeadRow: {
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 0,
+  },
+  historyCell: {
+    color: '#334155',
+    fontSize: 12,
+  },
+  historyHead: {
+    color: '#94A3B8',
+    fontSize: 10,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  cellRun: {
+    width: 38,
+  },
+  cellWhere: {
+    flex: 1.2,
+    fontWeight: '700',
+  },
+  cellNum: {
+    flex: 0.7,
+    textAlign: 'right',
+  },
+  cellWide: {
+    flex: 1.3,
+    textAlign: 'right',
+  },
+  whereMain: {
+    color: '#B91C1C',
+  },
+  whereWorker: {
+    color: '#15803D',
+  },
+});
 
 function ThreadedChatScreenSurface({ blockStatus }: { blockStatus: string }) {
   return (
