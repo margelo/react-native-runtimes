@@ -20,6 +20,9 @@ const IGNORED_FUNCTION_DIRECTIVES = new Set([
   'worklet',
 ]);
 
+const RUNTIME_ENTRY_PATTERN = /^index\.[^.]+\.ts$/;
+const WATCH_DEBOUNCE_MS = 50;
+
 function withThreadedRuntime(config, options = {}) {
   const projectRoot = path.resolve(
     options.projectRoot || config.projectRoot || process.cwd(),
@@ -32,12 +35,24 @@ function withThreadedRuntime(config, options = {}) {
     generatedDir,
     options.generatedEntry || 'entry.js',
   );
+  const roots = options.roots || ['App.tsx', 'src'];
 
-  generateThreadedRuntimeEntry({
-    generatedEntry,
-    projectRoot,
-    roots: options.roots || ['App.tsx', 'src'],
-  });
+  const regenerate = () => {
+    try {
+      generateThreadedRuntimeEntry({ generatedEntry, projectRoot, roots });
+    } catch (error) {
+      console.error(
+        '[threaded-runtime] failed to regenerate entry:',
+        error.message,
+      );
+    }
+  };
+
+  regenerate();
+
+  if (options.watch !== false) {
+    watchSources({ projectRoot, roots, onChange: regenerate });
+  }
 
   return {
     ...config,
@@ -49,6 +64,87 @@ function withThreadedRuntime(config, options = {}) {
       new Set([...(config.watchFolders || []), generatedDir]),
     ),
   };
+}
+
+function watchSources({ projectRoot, roots, onChange }) {
+  let timeout = null;
+  const schedule = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => {
+      timeout = null;
+      onChange();
+    }, WATCH_DEBOUNCE_MS);
+  };
+
+  const watchers = [];
+  const watchDir = (dir, recursive, filter) => {
+    try {
+      const watcher = fs.watch(dir, { recursive }, (_event, filename) => {
+        if (!filename) {
+          return;
+        }
+        if (filter(filename)) {
+          schedule();
+        }
+      });
+      watchers.push(watcher);
+    } catch (error) {
+      console.warn(
+        `[threaded-runtime] could not watch ${dir}: ${error.message}`,
+      );
+    }
+  };
+
+  const fileRootsAtProjectRoot = new Set();
+  const dirRootsAbsolute = [];
+  roots.forEach(rootPath => {
+    const absolute = path.resolve(projectRoot, rootPath);
+    if (!fs.existsSync(absolute)) {
+      return;
+    }
+    const stat = fs.statSync(absolute);
+    if (stat.isFile() && path.dirname(absolute) === projectRoot) {
+      fileRootsAtProjectRoot.add(path.basename(absolute));
+    } else if (stat.isDirectory()) {
+      dirRootsAbsolute.push(absolute);
+    }
+  });
+
+  watchDir(projectRoot, false, filename => {
+    if (RUNTIME_ENTRY_PATTERN.test(filename)) {
+      return true;
+    }
+    return fileRootsAtProjectRoot.has(filename);
+  });
+
+  dirRootsAbsolute.forEach(absRoot => {
+    watchDir(absRoot, true, filename => {
+      const parts = filename.split(path.sep);
+      if (parts.some(part => DEFAULT_IGNORED_DIRS.has(part))) {
+        return false;
+      }
+      return DEFAULT_EXTENSIONS.has(path.extname(filename));
+    });
+  });
+
+  const cleanup = () => {
+    watchers.forEach(watcher => {
+      try {
+        watcher.close();
+      } catch (_) {}
+    });
+  };
+  process.once('exit', cleanup);
+  process.once('SIGINT', () => {
+    cleanup();
+    process.exit();
+  });
+  process.once('SIGTERM', () => {
+    cleanup();
+    process.exit();
+  });
 }
 
 function generateThreadedRuntimeEntry({
