@@ -498,6 +498,7 @@ static NSDictionary *configuredLaunchOptions;
   NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
   NSString *normalizedAppName = appName.length > 0 ? appName : ThreadedRuntimeDefaultHostAppName;
   RCTHost *host = [self ensureHostWithRuntimeName:normalizedRuntimeName];
+  [self startRuntimeAndFlushWithRuntimeName:normalizedRuntimeName host:host];
   return [host createSurfaceWithModuleName:normalizedAppName initialProperties:properties ?: @{}];
 }
 
