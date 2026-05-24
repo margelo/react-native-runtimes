@@ -1,0 +1,20 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["threadedzustand"],
+  "ios": {
+    "iosModuleName": "NativeComposeThreadedZustand"
+  },
+  "android": {
+    "androidNamespace": ["threadedzustand"],
+    "androidCxxLibName": "NativeComposeThreadedZustand"
+  },
+  "autolinking": {
+    "SharedZustandStore": {
+      "all": {
+        "language": "c++",
+        "implementationClassName": "HybridSharedZustandStore"
+      }
+    }
+  },
+  "ignorePaths": ["node_modules", "example", "android/build", "ios/build"]
+}

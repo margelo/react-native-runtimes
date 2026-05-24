@@ -1,8 +1,10 @@
 #include "SharedZustandStoreJni.h"
 
-#include "SharedZustandStore.h"
+#include "SharedZustandStore.hpp"
 
 #include <optional>
+
+using ::margelo::nitro::threadedzustand::SharedZustandStore;
 
 namespace facebook::react {
 

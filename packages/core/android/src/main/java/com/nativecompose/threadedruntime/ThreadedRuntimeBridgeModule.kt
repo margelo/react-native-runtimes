@@ -152,7 +152,7 @@ class ThreadedRuntimeBridgeModule(private val reactContext: ReactApplicationCont
     const val NAME = "ThreadedRuntime"
 
     init {
-      System.loadLibrary("native-compose-threaded-runtime")
+      com.margelo.nitro.threadedruntime.NativeComposeThreadedRuntimeOnLoad.initializeNative()
     }
   }
 }

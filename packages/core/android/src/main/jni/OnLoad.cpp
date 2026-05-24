@@ -1,9 +1,8 @@
-#include "../../../../cpp/nativecompose/threadedruntime/ThreadedRuntimeNitroFunctions.h"
-
+#include <NativeComposeThreadedRuntimeOnLoad.hpp>
 #include <fbjni/fbjni.h>
 
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
   return facebook::jni::initialize(vm, [] {
-    nativecompose::threadedruntime::registerThreadedRuntimeNitroFunctions();
+    margelo::nitro::threadedruntime::registerAllNatives();
   });
 }

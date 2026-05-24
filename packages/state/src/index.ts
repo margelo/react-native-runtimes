@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { NativeEventEmitter, NativeModules } from 'react-native';
-import { NitroModules, type HybridObject } from 'react-native-nitro-modules';
+import { NitroModules } from 'react-native-nitro-modules';
+import type { SharedZustandStore as NitroSharedZustandStore } from './specs/SharedZustandStore.nitro';
 
 const ROOT_SUBTREE_KEY = '__root__';
 
@@ -55,24 +56,6 @@ type NativeSharedZustandStore = {
     revision: number,
     source: string | null,
   ) => Promise<void>;
-};
-
-type NitroSharedZustandStore = HybridObject<{
-  android: 'c++';
-  ios: 'c++';
-}> & {
-  getState(storeName: string, subtreeKey: string): string | null;
-  getOrInitState(
-    storeName: string,
-    subtreeKey: string,
-    initialJson: string,
-    persistKey: string,
-  ): string;
-  setState(storeName: string, subtreeKey: string, stateJson: string): number;
-  getRevision(storeName: string, subtreeKey: string): number;
-  clear(storeName: string, subtreeKey: string): number;
-  setPersistedState(persistKey: string, stateJson: string): void;
-  clearPersistedState(persistKey: string): void;
 };
 
 type NativeChangeEvent = {

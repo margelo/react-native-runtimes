@@ -1,4 +1,4 @@
-#include "SharedZustandStore.h"
+#include "SharedZustandStore.hpp"
 
 #include <cctype>
 #include <fstream>
@@ -7,7 +7,7 @@
 #include <sys/types.h>
 #include <utility>
 
-namespace facebook::react {
+namespace margelo::nitro::threadedzustand {
 
 SharedZustandStore& SharedZustandStore::instance() {
   static SharedZustandStore store;
@@ -187,4 +187,4 @@ std::string SharedZustandStore::persistencePathForKey(
   return persistenceDirectory_ + "/" + safeKey + ".json";
 }
 
-} // namespace facebook::react
+} // namespace margelo::nitro::threadedzustand
