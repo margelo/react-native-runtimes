@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -11,7 +12,7 @@ namespace facebook::react {
 class SharedZustandStore {
  public:
   struct Entry {
-    mutable std::mutex mutex;
+    mutable std::shared_mutex mutex;
     std::string stateJson;
     int revision = 0;
     bool hasState = false;

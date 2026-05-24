@@ -48,7 +48,7 @@ SharedZustandStore::Snapshot SharedZustandStore::setState(
     const std::string& subtreeKey,
     std::string stateJson) {
   auto entry = getOrCreateEntry(storeName, subtreeKey);
-  std::lock_guard<std::mutex> lock(entry->mutex);
+  std::lock_guard<std::shared_mutex> lock(entry->mutex);
   entry->stateJson = std::move(stateJson);
   entry->revision += 1;
   entry->hasState = true;
@@ -61,7 +61,7 @@ SharedZustandStore::Snapshot SharedZustandStore::getOrInitState(
     std::string initialJson,
     const std::optional<std::string>& persistKey) {
   auto entry = getOrCreateEntry(storeName, subtreeKey);
-  std::lock_guard<std::mutex> lock(entry->mutex);
+  std::lock_guard<std::shared_mutex> lock(entry->mutex);
   if (!entry->hasState) {
     entry->stateJson =
         persistKey.has_value()
@@ -80,7 +80,7 @@ std::optional<SharedZustandStore::Snapshot> SharedZustandStore::getState(
   if (!entry) {
     return std::nullopt;
   }
-  std::lock_guard<std::mutex> lock(entry->mutex);
+  std::shared_lock<std::shared_mutex> lock(entry->mutex);
   if (!entry->hasState) {
     return std::nullopt;
   }
@@ -94,7 +94,7 @@ int SharedZustandStore::getRevision(
   if (!entry) {
     return 0;
   }
-  std::lock_guard<std::mutex> lock(entry->mutex);
+  std::shared_lock<std::shared_mutex> lock(entry->mutex);
   return entry->revision;
 }
 
@@ -102,7 +102,7 @@ int SharedZustandStore::clear(
     const std::string& storeName,
     const std::string& subtreeKey) {
   auto entry = getOrCreateEntry(storeName, subtreeKey);
-  std::lock_guard<std::mutex> lock(entry->mutex);
+  std::lock_guard<std::shared_mutex> lock(entry->mutex);
   entry->stateJson.clear();
   entry->revision += 1;
   entry->hasState = false;
