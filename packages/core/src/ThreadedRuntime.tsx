@@ -32,13 +32,17 @@ export type ThreadedComponent<Props extends object = Record<string, never>> =
 type ThreadedComponentLoader = () => ComponentType<any>;
 type ThreadedComponentRegistry = Map<string, ThreadedComponentLoader>;
 type RuntimeFunctionLoader = () => RuntimeFunction<any>;
-export type ThreadedHeadlessTaskContext<Payload> = {
-  payload: Payload;
+export type ThreadedHeadlessTaskContext<
+  TPayload extends JsonValue | void = void,
+> = {
+  payload: TPayload;
   runtimeName: ThreadedRuntimeName;
   taskName: string;
 };
-export type ThreadedHeadlessTask<Payload = unknown> = (
-  context: ThreadedHeadlessTaskContext<Payload>,
+export type ThreadedHeadlessTask<
+  TPayload extends JsonValue | void = void,
+> = (
+  context: ThreadedHeadlessTaskContext<TPayload>,
 ) => void | Promise<void>;
 
 const threadedComponents: ThreadedComponentRegistry = new Map();
@@ -224,8 +228,10 @@ export type ThreadedRuntimePrewarmOptions = {
   kind?: string;
   useMainNativeModules?: boolean;
 };
-export type ThreadedHeadlessTaskOptions<Payload = unknown> = {
-  payload?: Payload;
+export type ThreadedHeadlessTaskOptions<
+  TPayload extends JsonValue | void = void,
+> = {
+  payload?: TPayload;
   runtimeName?: ThreadedRuntimeName;
 };
 
@@ -318,9 +324,11 @@ export function registerLazyThreadedComponent<Props extends object>(
   threadedComponents.set(name, loadComponent as ThreadedComponentLoader);
 }
 
-export function registerThreadedHeadlessTask<Payload = unknown>(
+export function registerThreadedHeadlessTask<
+  TPayload extends JsonValue | void = void,
+>(
   name: string,
-  task: ThreadedHeadlessTask<Payload>,
+  task: ThreadedHeadlessTask<TPayload>,
 ) {
   threadedHeadlessTasks.set(name, task as ThreadedHeadlessTask<any>);
 }
@@ -744,15 +752,20 @@ export const ThreadedRuntime = {
     });
   },
 
-  runHeadlessTask<Payload = unknown>(
+  runHeadlessTask<TPayload extends JsonValue | void = void>(
     taskName: string,
-    options: ThreadedHeadlessTaskOptions<Payload> = {},
+    options: ThreadedHeadlessTaskOptions<TPayload> = {},
   ) {
     if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
       return Promise.resolve();
     }
 
     const runtimeName = options.runtimeName ?? DEFAULT_RUNTIME_NAME;
+
+    if (options.payload !== undefined) {
+      assertJson(options.payload, { for: 'payload', id: taskName });
+    }
+
     const payloadJson = JSON.stringify(options.payload ?? null);
     const nativeDispatch =
       nativeRuntime?.dispatchHeadlessTask ?? nativeRuntime?.runHeadlessTask;

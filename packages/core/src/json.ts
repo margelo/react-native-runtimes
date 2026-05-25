@@ -29,7 +29,7 @@ const validateJson = (value: unknown): value is JsonValue => {
 
 export type AssertJsonContext = {
   readonly id: string;
-  readonly for: 'arguments' | 'result';
+  readonly for: 'arguments' | 'payload' | 'result';
 };
 
 export function assertJson(
