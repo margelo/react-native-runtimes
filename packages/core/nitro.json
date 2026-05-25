@@ -1,0 +1,20 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["threadedruntime"],
+  "ios": {
+    "iosModuleName": "NativeComposeThreadedRuntime"
+  },
+  "android": {
+    "androidNamespace": ["threadedruntime"],
+    "androidCxxLibName": "NativeComposeThreadedRuntime"
+  },
+  "autolinking": {
+    "ThreadedRuntimeFunctions": {
+      "all": {
+        "language": "c++",
+        "implementationClassName": "HybridThreadedRuntimeFunctions"
+      }
+    }
+  },
+  "ignorePaths": ["node_modules", "example", "android/build", "ios/build"]
+}

@@ -5,6 +5,9 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "react-native": "src/index.ts",
+  "scripts": {
+    "specs": "nitrogen"
+  },
   "files": [
     "android",
     "cpp",
@@ -12,6 +15,8 @@
     "metro.d.ts",
     "metro.js",
     "metro-transformer.js",
+    "nitrogen/generated",
+    "nitro.json",
     "NativeComposeThreadedRuntime.podspec",
     "README.md",
     "runtime-function-babel-plugin.js",
@@ -23,6 +28,9 @@
         "metro.d.ts"
       ]
     }
+  },
+  "devDependencies": {
+    "nitrogen": "^0.35.7"
   },
   "peerDependencies": {
     "react": "*",

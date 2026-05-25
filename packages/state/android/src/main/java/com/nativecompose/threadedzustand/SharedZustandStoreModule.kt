@@ -8,6 +8,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.module.annotations.ReactModule
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.margelo.nitro.threadedzustand.NativeComposeThreadedZustandOnLoad
 import java.util.concurrent.CopyOnWriteArraySet
 
 @DoNotStrip
@@ -232,7 +233,7 @@ class SharedZustandStoreModule(private val reactContext: ReactApplicationContext
     private val modules = CopyOnWriteArraySet<SharedZustandStoreModule>()
 
     init {
-      System.loadLibrary("native-compose-threaded-zustand")
+      NativeComposeThreadedZustandOnLoad.initializeNative()
     }
 
     private fun notifyChanged(

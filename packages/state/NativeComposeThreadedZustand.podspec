@@ -12,17 +12,19 @@ Pod::Spec.new do |s|
 
   s.platforms    = { :ios => min_ios_version_supported }
   s.source       = { :git => "https://github.com/react-native-runtimes/state.git", :tag => "#{s.version}" }
+
   s.source_files = [
-    "ios/**/*.{h,m,mm,cpp}",
-    "android/src/main/jni/SharedZustandStore.{h,cpp}",
-    "android/src/main/jni/SharedZustandNitroStore.{h,cpp}",
+    "ios/**/*.{h,m,mm,swift}",
+    "cpp/**/*.{h,hpp,c,cpp}",
   ]
+
   s.pod_target_xcconfig = {
     "CLANG_CXX_LANGUAGE_STANDARD" => "c++20",
     "DEFINES_MODULE" => "YES",
-    "HEADER_SEARCH_PATHS" => "\"$(PODS_ROOT)/NitroModules/cpp/core\" \"$(PODS_ROOT)/NitroModules/cpp/jsi\" \"$(PODS_ROOT)/NitroModules/cpp/prototype\" \"$(PODS_ROOT)/NitroModules/cpp/registry\" \"$(PODS_ROOT)/NitroModules/cpp/templates\" \"$(PODS_ROOT)/NitroModules/cpp/utils\"",
   }
 
+  load 'nitrogen/generated/ios/NativeComposeThreadedZustand+autolinking.rb'
+  add_nitrogen_files(s)
+
   install_modules_dependencies(s)
-  s.dependency "NitroModules"
 end
