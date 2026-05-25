@@ -10,12 +10,15 @@
     "cpp",
     "ios",
     "metro",
+    "nitrogen/generated",
+    "nitro.json",
     "NativeComposeThreadedRuntime.podspec",
     "README.md",
     "runtime-function-babel-plugin.js",
     "src"
   ],
   "scripts": {
+    "specs": "nitrogen",
     "test": "bun test metro/__tests__"
   },
   "typesVersions": {
@@ -24,6 +27,9 @@
         "metro/index.d.ts"
       ]
     }
+  },
+  "devDependencies": {
+    "nitrogen": "^0.35.7"
   },
   "peerDependencies": {
     "react": "*",

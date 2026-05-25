@@ -9,8 +9,7 @@
 #import <react/runtime/JSRuntimeFactory.h>
 #import <react/runtime/JSRuntimeFactoryCAPI.h>
 
-#include "../cpp/nativecompose/threadedruntime/RuntimeFunctionJsi.h"
-#include "../cpp/nativecompose/threadedruntime/ThreadedRuntimeNitroFunctions.h"
+#include "RuntimeFunctionJsi.h"
 
 static NSString *const ThreadedRuntimeDefaultRuntimeName = @"background-list";
 static NSString *const ThreadedRuntimeDefaultBusinessRuntimeName = @"business-runtime";
@@ -19,11 +18,6 @@ static NSString *const ThreadedRuntimeDefaultRuntimeKind = @"threaded-runtime";
 static NSString *const ThreadedRuntimeBusinessRuntimeKind = @"business-runtime";
 static NSString *const ThreadedRuntimeHeadlessTaskRunnerModule = @"ThreadedRuntimeHeadlessTaskRunner";
 static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFunctionRunner";
-
-__attribute__((constructor)) static void ThreadedRuntimeInstall()
-{
-  nativecompose::threadedruntime::registerThreadedRuntimeNitroFunctions();
-}
 
 @interface ThreadedRuntime (Private)
 

@@ -2262,8 +2262,8 @@ SPEC CHECKSUMS:
   FBLazyVector: 9266e314e3d76052e236e5a089812482de2aa92e
   HarnessUI: 7f27d320d7f2ac3fde60ffff25f0baedb40aac4c
   hermes-engine: 3c82959cae1a915edfe4922eb2e7a6093bafef22
-  NativeComposeThreadedRuntime: 016d2e24c45260725aac5efd9c5821e2e4b16b64
-  NativeComposeThreadedZustand: c280e8c1d2287494527cb84a63b234525dba7f63
+  NativeComposeThreadedRuntime: 4b8350496d42f24047077b5b4204a7d1ab3050c5
+  NativeComposeThreadedZustand: f06b87ae6025c9d7b8ae10d3ea606b4b08854f75
   NitroModules: d9e08ab81a7b5f6d16acbbc6ea6091e45ce34a9f
   RCTDeprecation: 8c8551df817748a9d03991a0aa8480320287151c
   RCTRequired: 8e80f923f66fe4ae460a021b0e7517d8fde3e465

@@ -5,13 +5,22 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "react-native": "src/index.ts",
+  "scripts": {
+    "specs": "nitrogen"
+  },
   "files": [
     "android",
+    "cpp",
     "ios",
+    "nitrogen/generated",
+    "nitro.json",
     "NativeComposeThreadedZustand.podspec",
     "react-native.config.js",
     "src"
   ],
+  "devDependencies": {
+    "nitrogen": "^0.35.7"
+  },
   "peerDependencies": {
     "react": "*",
     "react-native": "*",

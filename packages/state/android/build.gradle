@@ -28,6 +28,7 @@ buildscript {
 apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 apply plugin: "com.facebook.react"
+apply from: '../nitrogen/generated/android/NativeComposeThreadedZustand+autolinking.gradle'
 
 android {
   namespace "com.nativecompose.threadedzustand"
@@ -52,7 +53,7 @@ android {
 
   externalNativeBuild {
     cmake {
-      path "src/main/jni/CMakeLists.txt"
+      path "CMakeLists.txt"
     }
   }
 

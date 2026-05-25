@@ -2,11 +2,12 @@
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
 
-#include "../android/src/main/jni/SharedZustandNitroStore.h"
-#include "../android/src/main/jni/SharedZustandStore.h"
+#include "SharedZustandStore.hpp"
 
 #include <optional>
 #include <string>
+
+using ::margelo::nitro::threadedzustand::SharedZustandStore;
 
 static NSString *const SharedZustandStoreChangedEvent = @"SharedZustandStoreChanged";
 static NSString *const SharedZustandRootSubtreeKey = @"__root__";
@@ -53,15 +54,14 @@ static NSString *SharedZustandPersistenceDirectory()
 
 __attribute__((constructor)) static void SharedZustandInstall()
 {
-  facebook::react::SharedZustandStore::instance().setPersistenceDirectory(
+  SharedZustandStore::instance().setPersistenceDirectory(
       [SharedZustandPersistenceDirectory() UTF8String]);
-  facebook::react::registerSharedZustandNitroStore();
 }
 
 - (instancetype)init
 {
   if (self = [super init]) {
-    facebook::react::SharedZustandStore::instance().setPersistenceDirectory(
+    SharedZustandStore::instance().setPersistenceDirectory(
         [SharedZustandPersistenceDirectory() UTF8String]);
     dispatch_sync(SharedZustandModulesQueue(), ^{
       [SharedZustandModules() addObject:self];
@@ -123,7 +123,7 @@ RCT_REMAP_METHOD(getSubtreeState,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  auto entry = facebook::react::SharedZustandStore::instance().getState(
+  auto entry = SharedZustandStore::instance().getState(
       [storeName UTF8String], [subtreeKey UTF8String]);
   resolve(entry.has_value() ? [NSString stringWithUTF8String:entry->stateJson.c_str()] : (id)kCFNull);
 }
@@ -152,10 +152,10 @@ RCT_REMAP_METHOD(getOrInitSubtreeState,
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
   bool wasMissing =
-      !facebook::react::SharedZustandStore::instance()
+      !SharedZustandStore::instance()
            .getState([storeName UTF8String], [subtreeKey UTF8String])
            .has_value();
-  auto entry = facebook::react::SharedZustandStore::instance().getOrInitState(
+  auto entry = SharedZustandStore::instance().getOrInitState(
       [storeName UTF8String],
       [subtreeKey UTF8String],
       [initialJson UTF8String],
@@ -190,7 +190,7 @@ RCT_REMAP_METHOD(setSubtreeState,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  auto entry = facebook::react::SharedZustandStore::instance().setState(
+  auto entry = SharedZustandStore::instance().setState(
       [storeName UTF8String], [subtreeKey UTF8String], [stateJson UTF8String]);
   [SharedZustandStoreModule notifyChangedWithStoreName:storeName
                                             subtreeKey:subtreeKey
@@ -214,7 +214,7 @@ RCT_REMAP_METHOD(getSubtreeRevision,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  resolve(@(facebook::react::SharedZustandStore::instance().getRevision(
+  resolve(@(SharedZustandStore::instance().getRevision(
       [storeName UTF8String], [subtreeKey UTF8String])));
 }
 
@@ -234,7 +234,7 @@ RCT_REMAP_METHOD(clearSubtree,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  int revision = facebook::react::SharedZustandStore::instance().clear(
+  int revision = SharedZustandStore::instance().clear(
       [storeName UTF8String], [subtreeKey UTF8String]);
   [SharedZustandStoreModule notifyChangedWithStoreName:storeName
                                             subtreeKey:subtreeKey
@@ -250,7 +250,7 @@ RCT_REMAP_METHOD(setPersistedState,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  facebook::react::SharedZustandStore::instance().setPersistedState(
+  SharedZustandStore::instance().setPersistedState(
       [persistKey UTF8String], [stateJson UTF8String]);
   resolve(nil);
 }
@@ -260,7 +260,7 @@ RCT_REMAP_METHOD(clearPersistedState,
                  resolver:(RCTPromiseResolveBlock)resolve
                  rejecter:(RCTPromiseRejectBlock)reject)
 {
-  facebook::react::SharedZustandStore::instance().clearPersistedState([persistKey UTF8String]);
+  SharedZustandStore::instance().clearPersistedState([persistKey UTF8String]);
   resolve(nil);
 }
 

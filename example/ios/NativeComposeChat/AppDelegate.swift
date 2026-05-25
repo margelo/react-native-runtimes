@@ -2,7 +2,6 @@ import UIKit
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
-import NativeComposeThreadedRuntime
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {

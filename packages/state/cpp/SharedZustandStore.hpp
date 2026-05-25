@@ -2,27 +2,28 @@
 
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
 
-namespace facebook::react {
+namespace margelo::nitro::threadedzustand {
 
 class SharedZustandStore {
  public:
   struct Entry {
-    mutable std::mutex mutex;
+    mutable std::shared_mutex mutex;
     std::string stateJson;
     int revision = 0;
     bool hasState = false;
   };
 
-  static SharedZustandStore& instance();
-
   struct Snapshot {
     std::string stateJson;
     int revision = 0;
   };
+
+  static SharedZustandStore& instance();
 
   Snapshot setState(
       const std::string& storeName,
@@ -39,7 +40,9 @@ class SharedZustandStore {
   int getRevision(const std::string& storeName, const std::string& subtreeKey);
   int clear(const std::string& storeName, const std::string& subtreeKey);
   void setPersistenceDirectory(std::string directory);
-  void setPersistedState(const std::string& persistKey, const std::string& stateJson);
+  void setPersistedState(
+      const std::string& persistKey,
+      const std::string& stateJson);
   void clearPersistedState(const std::string& persistKey);
 
  private:
@@ -62,4 +65,4 @@ class SharedZustandStore {
   std::unordered_map<std::string, std::shared_ptr<Entry>> stores_;
 };
 
-} // namespace facebook::react
+} // namespace margelo::nitro::threadedzustand
