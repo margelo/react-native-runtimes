@@ -2,8 +2,14 @@ const fs = require('fs');
 const path = require('path');
 const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
+const {
+  DEFAULT_SOURCE_EXTENSIONS,
+  getPlatformExtensionsFromMetroConfig,
+  isRuntimeEntryFileName,
+  normalizeExtensions,
+  runtimeEntryFromFileName,
+} = require('./runtime-entry-files');
 
-const DEFAULT_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx']);
 const DEFAULT_IGNORED_DIRS = new Set([
   '.git',
   '.gradle',
@@ -20,7 +26,6 @@ const IGNORED_FUNCTION_DIRECTIVES = new Set([
   'worklet',
 ]);
 
-const RUNTIME_ENTRY_PATTERN = /^index\.[^.]+\.ts$/;
 const WATCH_DEBOUNCE_MS = 50;
 
 function withThreadedRuntime(config, options = {}) {
@@ -36,10 +41,19 @@ function withThreadedRuntime(config, options = {}) {
     options.generatedEntry || 'entry.js',
   );
   const roots = options.roots || ['App.tsx', 'src'];
+  const platformExtensions =
+    options.platformExtensions || getPlatformExtensionsFromMetroConfig(config);
+  const sourceExtensions = options.sourceExtensions || DEFAULT_SOURCE_EXTENSIONS;
 
   const regenerate = () => {
     try {
-      generateThreadedRuntimeEntry({ generatedEntry, projectRoot, roots });
+      generateThreadedRuntimeEntry({
+        generatedEntry,
+        platformExtensions,
+        projectRoot,
+        roots,
+        sourceExtensions,
+      });
     } catch (error) {
       console.error(
         '[threaded-runtime] failed to regenerate entry:',
@@ -51,14 +65,20 @@ function withThreadedRuntime(config, options = {}) {
   regenerate();
 
   if (options.watch !== false) {
-    watchSources({ projectRoot, roots, onChange: regenerate });
+    watchSources({
+      onChange: regenerate,
+      platformExtensions,
+      projectRoot,
+      roots,
+      sourceExtensions,
+    });
   }
 
   return {
     ...config,
     transformer: {
       ...(config.transformer || {}),
-      babelTransformerPath: path.join(__dirname, 'metro-transformer.js'),
+      babelTransformerPath: path.join(__dirname, 'transformer.js'),
     },
     watchFolders: Array.from(
       new Set([...(config.watchFolders || []), generatedDir]),
@@ -66,7 +86,13 @@ function withThreadedRuntime(config, options = {}) {
   };
 }
 
-function watchSources({ projectRoot, roots, onChange }) {
+function watchSources({
+  projectRoot,
+  roots,
+  onChange,
+  platformExtensions,
+  sourceExtensions,
+}) {
   let timeout = null;
   const schedule = () => {
     if (timeout) {
@@ -113,7 +139,9 @@ function watchSources({ projectRoot, roots, onChange }) {
   });
 
   watchDir(projectRoot, false, filename => {
-    if (RUNTIME_ENTRY_PATTERN.test(filename)) {
+    if (
+      isRuntimeEntryFileName(filename, { platformExtensions, sourceExtensions })
+    ) {
       return true;
     }
     return fileRootsAtProjectRoot.has(filename);
@@ -125,7 +153,7 @@ function watchSources({ projectRoot, roots, onChange }) {
       if (parts.some(part => DEFAULT_IGNORED_DIRS.has(part))) {
         return false;
       }
-      return DEFAULT_EXTENSIONS.has(path.extname(filename));
+      return hasSourceExtension(filename, sourceExtensions);
     });
   });
 
@@ -149,16 +177,21 @@ function watchSources({ projectRoot, roots, onChange }) {
 
 function generateThreadedRuntimeEntry({
   generatedEntry,
+  platformExtensions = [],
   projectRoot = process.cwd(),
   roots = ['App.tsx', 'src'],
+  sourceExtensions = DEFAULT_SOURCE_EXTENSIONS,
 }) {
   const root = path.resolve(projectRoot);
-  const files = collectSourceFiles(root, roots);
+  const files = collectSourceFiles(root, roots, sourceExtensions);
   const components = files.flatMap(file => scanThreadedComponents(file, root));
   const runtimeFunctions = files.flatMap(file =>
     scanRuntimeFunctions(file, root),
   );
-  const runtimeEntries = collectRuntimeEntryFiles(root);
+  const runtimeEntries = collectRuntimeEntryFiles(root, {
+    platformExtensions,
+    sourceExtensions,
+  });
   const seenNames = new Map();
   const seenRuntimeFunctionIds = new Map();
 
@@ -211,30 +244,50 @@ function generateThreadedRuntimeEntry({
   };
 }
 
-function collectRuntimeEntryFiles(projectRoot) {
+function collectRuntimeEntryFiles(
+  projectRoot,
+  { platformExtensions, sourceExtensions } = {},
+) {
   if (!fs.existsSync(projectRoot)) {
     return [];
   }
 
-  return fs
+  const entriesByRuntimeName = new Map();
+
+  fs
     .readdirSync(projectRoot, { withFileTypes: true })
     .filter(entry => entry.isFile())
     .map(entry => entry.name)
-    .map(fileName => {
-      const match = /^index\.([^.]+)\.ts$/.exec(fileName);
-      if (!match) {
-        return null;
+    .sort()
+    .forEach(fileName => {
+      const runtimeEntry = runtimeEntryFromFileName(fileName, {
+        platformExtensions,
+        sourceExtensions,
+      });
+      if (!runtimeEntry) {
+        return;
       }
-      return {
+
+      const entry = {
         file: path.join(projectRoot, fileName),
-        runtimeName: match[1],
+        platformExtension: runtimeEntry.platformExtension,
+        requestFile: path.join(
+          projectRoot,
+          `${runtimeEntry.requestBaseName}.${runtimeEntry.sourceExtension}`,
+        ),
+        runtimeName: runtimeEntry.runtimeName,
       };
-    })
-    .filter(Boolean)
+      const existing = entriesByRuntimeName.get(runtimeEntry.runtimeName);
+      if (!existing || (existing.platformExtension && !entry.platformExtension)) {
+        entriesByRuntimeName.set(runtimeEntry.runtimeName, entry);
+      }
+    });
+
+  return Array.from(entriesByRuntimeName.values())
     .sort((left, right) => left.runtimeName.localeCompare(right.runtimeName));
 }
 
-function collectSourceFiles(projectRoot, roots) {
+function collectSourceFiles(projectRoot, roots, sourceExtensions) {
   const files = [];
 
   roots.forEach(rootPath => {
@@ -244,33 +297,38 @@ function collectSourceFiles(projectRoot, roots) {
     }
     const stat = fs.statSync(absoluteRoot);
     if (stat.isFile()) {
-      if (DEFAULT_EXTENSIONS.has(path.extname(absoluteRoot))) {
+      if (hasSourceExtension(absoluteRoot, sourceExtensions)) {
         files.push(absoluteRoot);
       }
       return;
     }
     if (stat.isDirectory()) {
-      walkDirectory(absoluteRoot, files);
+      walkDirectory(absoluteRoot, files, sourceExtensions);
     }
   });
 
   return files.sort();
 }
 
-function walkDirectory(directory, files) {
+function walkDirectory(directory, files, sourceExtensions) {
   fs.readdirSync(directory, { withFileTypes: true }).forEach(entry => {
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       if (!DEFAULT_IGNORED_DIRS.has(entry.name)) {
-        walkDirectory(absolutePath, files);
+        walkDirectory(absolutePath, files, sourceExtensions);
       }
       return;
     }
 
-    if (entry.isFile() && DEFAULT_EXTENSIONS.has(path.extname(entry.name))) {
+    if (entry.isFile() && hasSourceExtension(entry.name, sourceExtensions)) {
       files.push(absolutePath);
     }
   });
+}
+
+function hasSourceExtension(fileName, sourceExtensions) {
+  const extension = path.extname(fileName).replace(/^\./, '');
+  return new Set(normalizeExtensions(sourceExtensions)).has(extension);
 }
 
 function scanThreadedComponents(file, projectRoot) {
@@ -611,7 +669,10 @@ function renderRuntimeEntryDispatch({ generatedDir, runtimeEntries }) {
 
   const branches = runtimeEntries
     .map((entry, index) => {
-      const requestPath = toRequirePath(generatedDir, entry.file);
+      const requestPath = toRequirePath(
+        generatedDir,
+        entry.requestFile || entry.file,
+      );
       const keyword = index === 0 ? 'if' : 'else if';
       const runtimeName = JSON.stringify(entry.runtimeName);
       return (

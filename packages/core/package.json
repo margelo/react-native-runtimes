@@ -9,18 +9,19 @@
     "android",
     "cpp",
     "ios",
-    "metro.d.ts",
-    "metro.js",
-    "metro-transformer.js",
+    "metro",
     "NativeComposeThreadedRuntime.podspec",
     "README.md",
     "runtime-function-babel-plugin.js",
     "src"
   ],
+  "scripts": {
+    "test": "bun test metro/__tests__"
+  },
   "typesVersions": {
     "*": {
       "metro": [
-        "metro.d.ts"
+        "metro/index.d.ts"
       ]
     }
   },
