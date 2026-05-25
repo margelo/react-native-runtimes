@@ -11,6 +11,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import NativeThreadedRuntimeSurface from './NativeThreadedRuntimeSurface';
+import { assertJson, type JsonValue } from './json';
 
 const DEFAULT_RUNTIME_NAME = 'background-list';
 const DEFAULT_BUSINESS_RUNTIME_NAME = 'business-runtime';
@@ -94,6 +95,24 @@ type ThreadedRuntimeNativeModule = {
   destroyAllRuntimes?: () => Promise<void>;
   getRuntimeNames?: () => Promise<string[]>;
 };
+
+export type ThreadableFunctionResult<
+  TReturn extends JsonValue | void = JsonValue | void,
+> = TReturn | Promise<TReturn>;
+
+export type ThreadableFunction<
+  TArgs extends readonly JsonValue[] = readonly JsonValue[],
+  TReturn extends JsonValue | void = JsonValue | void,
+> = (...args: TArgs) => ThreadableFunctionResult<TReturn>;
+
+/** Args for `T` — use instead of `Parameters<T>` (which widens to `unknown[]`). */
+export type ThreadableFunctionArgs<T extends ThreadableFunction> =
+  T extends ThreadableFunction<infer TArgs extends readonly JsonValue[], any>
+    ? TArgs
+    : readonly JsonValue[];
+
+export type ThreadableFunctionAwaitedReturn<T extends ThreadableFunction> =
+  Awaited<ReturnType<T>>;
 
 const nativeRuntime = NativeModules.ThreadedRuntime as
   | ThreadedRuntimeNativeModule
@@ -210,38 +229,42 @@ export type ThreadedHeadlessTaskOptions<Payload = unknown> = {
   runtimeName?: ThreadedRuntimeName;
 };
 
-type AnyFunction = (...args: any[]) => any;
-
 export type RuntimeFunctionMetadata = {
   id: string;
 };
 
-export type RuntimeFunction<TFunction extends AnyFunction> = TFunction & {
+export type RuntimeFunction<
+  TArgs extends readonly JsonValue[] = readonly JsonValue[],
+  TReturn extends JsonValue | void = JsonValue | void,
+> = ThreadableFunction<TArgs, TReturn> & {
   __runtimeFunction?: RuntimeFunctionMetadata;
   runOn(
     runtimeName: ThreadedRuntimeName,
-    ...args: Parameters<TFunction>
-  ): Promise<Awaited<ReturnType<TFunction>>>;
+    ...args: TArgs
+  ): Promise<Awaited<TReturn>>;
 };
 
-export type RuntimeFunctionCallBuilder<TFunction extends AnyFunction> = {
+export type RuntimeFunctionCallBuilder<
+  TArgs extends readonly JsonValue[] = readonly JsonValue[],
+  TReturn extends JsonValue | void = JsonValue | void,
+> = {
   on(
     runtimeName: ThreadedRuntimeName,
-  ): (
-    ...args: Parameters<TFunction>
-  ) => Promise<Awaited<ReturnType<TFunction>>>;
+  ): (...args: TArgs) => Promise<Awaited<TReturn>>;
 };
 
 export type RuntimeFunctionFactory = {
-  <TFunction extends AnyFunction>(fn: TFunction): RuntimeFunction<TFunction>;
-  withId<TFunction extends AnyFunction>(
+  <TArgs extends readonly JsonValue[], TReturn extends JsonValue | void>(
+    fn: ThreadableFunction<TArgs, TReturn>,
+  ): RuntimeFunction<TArgs, TReturn>;
+  withId<TArgs extends readonly JsonValue[], TReturn extends JsonValue | void>(
     id: string,
-    fn: TFunction,
-  ): RuntimeFunction<TFunction>;
-  named<TFunction extends AnyFunction>(
+    fn: ThreadableFunction<TArgs, TReturn>,
+  ): RuntimeFunction<TArgs, TReturn>;
+  named<TArgs extends readonly JsonValue[], TReturn extends JsonValue | void>(
     id: string,
-    fn: TFunction,
-  ): RuntimeFunction<TFunction>;
+    fn: ThreadableFunction<TArgs, TReturn>,
+  ): RuntimeFunction<TArgs, TReturn>;
 };
 
 export type ThreadedProps<Props extends object = Record<string, never>> = {
@@ -302,9 +325,12 @@ export function registerThreadedHeadlessTask<Payload = unknown>(
   threadedHeadlessTasks.set(name, task as ThreadedHeadlessTask<any>);
 }
 
-export function registerRuntimeFunction<TFunction extends AnyFunction>(
+export function registerRuntimeFunction<
+  TArgs extends readonly JsonValue[],
+  TReturn extends JsonValue | void,
+>(
   id: string,
-  loadFunction: () => RuntimeFunction<TFunction>,
+  loadFunction: () => RuntimeFunction<TArgs, TReturn>,
 ) {
   installRuntimeFunctionJsi();
   runtimeFunctions.set(id, loadFunction as RuntimeFunctionLoader);
@@ -314,26 +340,36 @@ export function registerRuntimeFunction<TFunction extends AnyFunction>(
   );
 }
 
-function attachRuntimeFunction<TFunction extends AnyFunction>(
+function attachRuntimeFunction<
+  TArgs extends readonly JsonValue[],
+  TReturn extends JsonValue | void,
+>(
   id: string | null,
-  fn: TFunction,
-): RuntimeFunction<TFunction> {
-  const runtimeFn = fn as RuntimeFunction<TFunction>;
+  fn: ThreadableFunction<TArgs, TReturn>,
+): RuntimeFunction<TArgs, TReturn> {
+  const runtimeFn = fn as RuntimeFunction<TArgs, TReturn>;
   if (id) {
     runtimeFn.__runtimeFunction = { id };
   }
-  runtimeFn.runOn = (runtimeName, ...args) =>
+  runtimeFn.runOn = (runtimeName, ...args: TArgs) =>
     ThreadedRuntime.run(runtimeName, runtimeFn, ...args);
   return runtimeFn;
 }
 
-const createRuntimeFunction = <TFunction extends AnyFunction>(
-  fn: TFunction,
-): RuntimeFunction<TFunction> => attachRuntimeFunction(null, fn);
+const createRuntimeFunction = <
+  TArgs extends readonly JsonValue[],
+  TReturn extends JsonValue | void,
+>(
+  fn: ThreadableFunction<TArgs, TReturn>,
+): RuntimeFunction<TArgs, TReturn> => attachRuntimeFunction(null, fn);
 
 createRuntimeFunction.withId = function runtimeFunctionWithId<
-  TFunction extends AnyFunction,
->(id: string, fn: TFunction): RuntimeFunction<TFunction> {
+  TArgs extends readonly JsonValue[],
+  TReturn extends JsonValue | void,
+>(
+  id: string,
+  fn: ThreadableFunction<TArgs, TReturn>,
+): RuntimeFunction<TArgs, TReturn> {
   return attachRuntimeFunction(id, fn);
 };
 
@@ -341,9 +377,12 @@ createRuntimeFunction.named = createRuntimeFunction.withId;
 
 export const runtimeFunction = createRuntimeFunction as RuntimeFunctionFactory;
 
-export function call<TFunction extends AnyFunction>(
-  fn: RuntimeFunction<TFunction>,
-): RuntimeFunctionCallBuilder<TFunction> {
+export function call<
+  TArgs extends readonly JsonValue[],
+  TReturn extends JsonValue | void,
+>(
+  fn: RuntimeFunction<TArgs, TReturn>,
+): RuntimeFunctionCallBuilder<TArgs, TReturn> {
   return {
     on(runtimeName) {
       return (...args) => ThreadedRuntime.run(runtimeName, fn, ...args);
@@ -571,6 +610,11 @@ async function runRegisteredRuntimeFunction(
     const result = await Promise.resolve(
       callRegisteredRuntimeFunction(functionId, argsJson),
     );
+
+    if (result !== undefined) {
+      assertJson(result, { for: 'result', id: functionId });
+    }
+
     await completeRuntimeFunctionCall(
       callId,
       JSON.stringify(result ?? null),
@@ -722,26 +766,29 @@ export const ThreadedRuntime = {
     return nativeDispatch(runtimeName, taskName, payloadJson);
   },
 
-  async run<TFunction extends AnyFunction>(
+  async run<
+    TArgs extends readonly JsonValue[],
+    TReturn extends JsonValue | void,
+  >(
     runtimeName: ThreadedRuntimeName,
-    fn: RuntimeFunction<TFunction>,
-    ...args: Parameters<TFunction>
-  ): Promise<Awaited<ReturnType<TFunction>>> {
+    fn: RuntimeFunction<TArgs, TReturn>,
+    ...args: TArgs
+  ): Promise<Awaited<TReturn>> {
     if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
-      return Promise.resolve(fn(...args)) as Promise<
-        Awaited<ReturnType<TFunction>>
-      >;
+      return Promise.resolve(fn(...args)) as Promise<Awaited<TReturn>>;
     }
 
     const functionId = fn.__runtimeFunction?.id;
     if (!functionId) {
-      return Promise.reject<Awaited<ReturnType<TFunction>>>(
+      return Promise.reject<Awaited<TReturn>>(
         new Error(
           'Runtime function is missing generated metadata. Make sure it is ' +
             'exported as runtimeFunction(...) and Metro uses withThreadedRuntime(...).',
         ),
       );
     }
+
+    assertJson(args, { id: functionId, for: 'arguments' });
 
     const argsJson = JSON.stringify(args);
     const runtimeNitro = getRuntimeFunctionsNitro();
@@ -752,7 +799,7 @@ export const ThreadedRuntime = {
           functionId,
           argsJson,
         );
-        return JSON.parse(resultJson) as Awaited<ReturnType<TFunction>>;
+        return JSON.parse(resultJson) as Awaited<TReturn>;
       } catch (error) {
         if (!isRuntimeDispatcherMissing(error)) {
           throw error;
@@ -762,7 +809,7 @@ export const ThreadedRuntime = {
 
     const callRuntimeFunction = nativeRuntime?.callRuntimeFunction;
     if (!callRuntimeFunction) {
-      return Promise.reject<Awaited<ReturnType<TFunction>>>(
+      return Promise.reject<Awaited<TReturn>>(
         new Error(
           'ThreadedRuntime native module does not support runtime functions',
         ),
@@ -774,22 +821,28 @@ export const ThreadedRuntime = {
       functionId,
       argsJson,
     );
-    return JSON.parse(resultJson) as Awaited<ReturnType<TFunction>>;
+    return JSON.parse(resultJson) as Awaited<TReturn>;
   },
 
-  call<TFunction extends AnyFunction>(
+  call<
+    TArgs extends readonly JsonValue[],
+    TReturn extends JsonValue | void,
+  >(
     runtimeName: ThreadedRuntimeName,
-    fn: RuntimeFunction<TFunction>,
-    ...args: Parameters<TFunction>
+    fn: RuntimeFunction<TArgs, TReturn>,
+    ...args: TArgs
   ) {
     return ThreadedRuntime.run(runtimeName, fn, ...args);
   },
 
   runtime(runtimeName: ThreadedRuntimeName) {
     return {
-      run<TFunction extends AnyFunction>(
-        fn: RuntimeFunction<TFunction>,
-        ...args: Parameters<TFunction>
+      run<
+        TArgs extends readonly JsonValue[],
+        TReturn extends JsonValue | void,
+      >(
+        fn: RuntimeFunction<TArgs, TReturn>,
+        ...args: TArgs
       ) {
         return ThreadedRuntime.run(runtimeName, fn, ...args);
       },

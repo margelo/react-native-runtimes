@@ -31,4 +31,8 @@ export {
   type RuntimeFunctionCallBuilder,
   type RuntimeFunctionFactory,
   type RuntimeFunctionMetadata,
+  type ThreadableFunction,
+  type ThreadableFunctionArgs,
+  type ThreadableFunctionAwaitedReturn,
+  type ThreadableFunctionResult,
 } from './ThreadedRuntime';
