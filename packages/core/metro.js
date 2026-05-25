@@ -89,6 +89,9 @@ function watchSources({ projectRoot, roots, onChange }) {
           schedule();
         }
       });
+      if (typeof watcher.unref === 'function') {
+        watcher.unref();
+      }
       watchers.push(watcher);
     } catch (error) {
       console.warn(
