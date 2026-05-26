@@ -9,7 +9,7 @@ The app exercises:
 - Threaded-runtime list surfaces with FlashList and LegendList.
 - Whole-screen threaded rendering for chat-style flows.
 - Shared state across runtimes through `@react-native-runtimes/state`.
-- Runtime prewarming, headless tasks, and a two-runtime architecture example.
+- Runtime prewarming, scheduled runtime functions, and a two-runtime architecture example.
 
 ## Running
 

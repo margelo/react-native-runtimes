@@ -49,7 +49,8 @@ namespace margelo::nitro::threadedruntime {
 
     public:
       // Methods
-      virtual std::shared_ptr<Promise<std::string>> run(const std::string& runtimeName, const std::string& functionId, const std::string& argsJson) = 0;
+      virtual std::shared_ptr<Promise<std::string>> call(const std::string& runtimeName, const std::string& functionId, const std::string& argsJson) = 0;
+      virtual std::shared_ptr<Promise<void>> schedule(const std::string& runtimeName, const std::string& functionId, const std::string& argsJson) = 0;
 
     protected:
       // Hybrid Setup

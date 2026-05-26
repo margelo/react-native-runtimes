@@ -51,7 +51,7 @@ class MainApplication : Application(), ReactApplication {
           applicationContext,
           "two-runtimes-business-runtime",
       )
-      ThreadedRuntime.dispatchHeadlessTask(
+      ThreadedRuntime.schedule(
           applicationContext,
           "two-runtimes-business-runtime",
           "twoRuntimes:startBusinessRuntime",

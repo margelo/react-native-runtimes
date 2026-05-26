@@ -11,7 +11,7 @@ module.exports = {
         'threaded-runtime/render-components',
         'threaded-runtime/pass-props',
         'threaded-runtime/prewarming',
-        'threaded-runtime/headless-runtime',
+        'threaded-runtime/background-work',
         'threaded-runtime/scheduling-functions',
         'threaded-runtime/business-logic-executor',
       ],

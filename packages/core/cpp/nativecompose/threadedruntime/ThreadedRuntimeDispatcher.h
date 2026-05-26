@@ -9,12 +9,12 @@
 namespace nativecompose::threadedruntime {
 
 #if defined(__ANDROID__)
-inline void dispatchHeadlessTask(
+inline void schedule(
     JNIEnv *env,
     jobject context,
     const std::string &runtimeName,
-    const std::string &taskName,
-    const std::string &payloadJson)
+    const std::string &functionId,
+    const std::string &argsJson)
 {
   jclass runtimeClass =
       env->FindClass("com/nativecompose/threadedruntime/ThreadedRuntime");
@@ -22,28 +22,28 @@ inline void dispatchHeadlessTask(
     return;
   }
 
-  jmethodID dispatchMethod = env->GetStaticMethodID(
+  jmethodID scheduleMethod = env->GetStaticMethodID(
       runtimeClass,
-      "dispatchHeadlessTask",
+      "schedule",
       "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
-  if (dispatchMethod == nullptr) {
+  if (scheduleMethod == nullptr) {
     env->DeleteLocalRef(runtimeClass);
     return;
   }
 
   jstring runtimeNameValue = env->NewStringUTF(runtimeName.c_str());
-  jstring taskNameValue = env->NewStringUTF(taskName.c_str());
-  jstring payloadJsonValue = env->NewStringUTF(payloadJson.c_str());
+  jstring functionIdValue = env->NewStringUTF(functionId.c_str());
+  jstring argsJsonValue = env->NewStringUTF(argsJson.c_str());
   env->CallStaticVoidMethod(
       runtimeClass,
-      dispatchMethod,
+      scheduleMethod,
       context,
       runtimeNameValue,
-      taskNameValue,
-      payloadJsonValue);
+      functionIdValue,
+      argsJsonValue);
 
-  env->DeleteLocalRef(payloadJsonValue);
-  env->DeleteLocalRef(taskNameValue);
+  env->DeleteLocalRef(argsJsonValue);
+  env->DeleteLocalRef(functionIdValue);
   env->DeleteLocalRef(runtimeNameValue);
   env->DeleteLocalRef(runtimeClass);
 }
@@ -93,10 +93,10 @@ inline void prewarmBusinessRuntime(
   prewarmRuntime(env, context, runtimeName, "business-runtime", true);
 }
 #elif defined(__APPLE__)
-void dispatchHeadlessTask(
+void schedule(
     const std::string &runtimeName,
-    const std::string &taskName,
-    const std::string &payloadJson);
+    const std::string &functionId,
+    const std::string &argsJson);
 
 void prewarmRuntime(const std::string &runtimeName);
 void prewarmRuntime(

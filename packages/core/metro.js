@@ -356,6 +356,7 @@ function scanRuntimeFunctions(file, projectRoot) {
     sourceType: 'module',
   });
   const runtimeFunctions = [];
+  const stringConstants = collectStringConstants(ast);
 
   traverse(ast, {
     Program(pathRef) {
@@ -406,7 +407,7 @@ function scanRuntimeFunctions(file, projectRoot) {
           exportName: declarator.id.name,
           file,
           id:
-            explicitRuntimeFunctionId(declarator.init) ??
+            explicitRuntimeFunctionId(declarator.init, stringConstants) ??
             runtimeFunctionId(file, projectRoot, declarator.id.name),
         });
       });
@@ -414,6 +415,27 @@ function scanRuntimeFunctions(file, projectRoot) {
   });
 
   return runtimeFunctions;
+}
+
+function collectStringConstants(ast) {
+  const constants = new Map();
+
+  ast.program.body.forEach(node => {
+    if (node.type !== 'VariableDeclaration' || node.kind !== 'const') {
+      return;
+    }
+
+    node.declarations.forEach(declarator => {
+      if (
+        declarator.id.type === 'Identifier' &&
+        declarator.init?.type === 'StringLiteral'
+      ) {
+        constants.set(declarator.id.name, declarator.init.value);
+      }
+    });
+  });
+
+  return constants;
 }
 
 function runtimeFunctionShortcutName(functionName) {
@@ -506,7 +528,7 @@ function isRuntimeFunctionCall(node) {
   );
 }
 
-function explicitRuntimeFunctionId(node) {
+function explicitRuntimeFunctionId(node, stringConstants = new Map()) {
   if (!node || node.type !== 'CallExpression') {
     return null;
   }
@@ -522,7 +544,16 @@ function explicitRuntimeFunctionId(node) {
     return null;
   }
   const idNode = node.arguments[0];
-  return idNode?.type === 'StringLiteral' ? idNode.value : null;
+  if (idNode?.type === 'StringLiteral') {
+    return idNode.value;
+  }
+  if (idNode?.type === 'Identifier' && stringConstants.has(idNode.name)) {
+    return stringConstants.get(idNode.name);
+  }
+  throw new Error(
+    'runtimeFunction.named(...) and runtimeFunction.withId(...) must use ' +
+      'a string literal id or a same-file const string id',
+  );
 }
 
 function runtimeFunctionId(file, projectRoot, exportName) {

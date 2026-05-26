@@ -148,6 +148,46 @@ void callInTargetRuntime(
   resolveFromValue(runtime, promise, result);
 }
 
+void scheduleInTargetRuntime(
+    Runtime &runtime,
+    const std::string &functionId,
+    const std::string &argsJson)
+{
+  auto global = runtime.global();
+  auto callValue = global.getProperty(runtime, "__rnrCallRuntimeFunction");
+  if (!callValue.isObject() || !callValue.asObject(runtime).isFunction(runtime)) {
+    throw std::runtime_error("__rnrCallRuntimeFunction is not installed in target runtime");
+  }
+
+  auto callFunction = callValue.asObject(runtime).asFunction(runtime);
+  auto result = callFunction.call(
+      runtime,
+      String::createFromUtf8(runtime, functionId),
+      String::createFromUtf8(runtime, argsJson.empty() ? "[]" : argsJson));
+
+  if (result.isObject()) {
+    auto resultObject = result.asObject(runtime);
+    if (isThenable(runtime, resultObject)) {
+      auto logRejection = Function::createFromHostFunction(
+          runtime,
+          PropNameID::forAscii(runtime, "__rnrLogScheduledRuntimeFunctionError"),
+          1,
+          [functionId](Runtime &rt, const Value &, const Value *args, size_t count) -> Value {
+            auto message = count > 0 ? errorToMessage(rt, args[0]) : "Runtime function rejected";
+            auto console = rt.global().getPropertyAsObject(rt, "console");
+            auto warn = console.getPropertyAsFunction(rt, "warn");
+            warn.call(
+                rt,
+                String::createFromUtf8(rt, "Scheduled runtime function \"" + functionId + "\" failed"),
+                String::createFromUtf8(rt, message));
+            return Value::undefined();
+          });
+      auto then = resultObject.getProperty(runtime, "then").asObject(runtime).asFunction(runtime);
+      then.callWithThis(runtime, resultObject, Value::undefined(), logRejection);
+    }
+  }
+}
+
 } // namespace
 
 void registerRuntimeDispatcher(
@@ -165,7 +205,7 @@ void unregisterRuntimeDispatcher(const std::string &runtimeName)
   runtimeDispatchers.erase(runtimeName);
 }
 
-std::shared_ptr<Promise<std::string>> callRuntimeFunctionOnRuntime(
+std::shared_ptr<Promise<std::string>> callOnRuntime(
     const std::string &runtimeName,
     const std::string &functionId,
     const std::string &argsJson)
@@ -200,6 +240,60 @@ std::shared_ptr<Promise<std::string>> callRuntimeFunctionOnRuntime(
         promise->reject(std::current_exception());
       }
     });
+  } catch (...) {
+    promise->reject(std::current_exception());
+  }
+
+  return promise;
+}
+
+std::shared_ptr<Promise<void>> scheduleRuntimeFunctionOnRuntime(
+    const std::string &runtimeName,
+    const std::string &functionId,
+    const std::string &argsJson)
+{
+  auto promise = Promise<void>::create();
+
+  Runtime *targetRuntime = nullptr;
+  std::shared_ptr<Dispatcher> targetDispatcher;
+  {
+    std::lock_guard lock(runtimeDispatchersMutex);
+    auto iterator = runtimeDispatchers.find(runtimeName);
+    if (iterator == runtimeDispatchers.end()) {
+      promise->reject(std::make_exception_ptr(std::runtime_error(
+          "No runtime dispatcher registered for \"" + runtimeName + "\"")));
+      return promise;
+    }
+    targetRuntime = iterator->second.runtime;
+    targetDispatcher = iterator->second.dispatcher.lock();
+  }
+
+  if (targetRuntime == nullptr || targetDispatcher == nullptr) {
+    promise->reject(std::make_exception_ptr(std::runtime_error(
+        "Runtime dispatcher expired for \"" + runtimeName + "\"")));
+    return promise;
+  }
+
+  try {
+    targetDispatcher->runAsync([targetRuntime, functionId, argsJson]() {
+      try {
+        scheduleInTargetRuntime(*targetRuntime, functionId, argsJson);
+      } catch (const std::exception &error) {
+        // Keep scheduled calls fire-and-forget: failures are reported on the
+        // target runtime, not to the scheduling caller.
+        try {
+          auto &runtime = *targetRuntime;
+          auto console = runtime.global().getPropertyAsObject(runtime, "console");
+          auto warn = console.getPropertyAsFunction(runtime, "warn");
+          warn.call(
+              runtime,
+              String::createFromUtf8(runtime, "Scheduled runtime function \"" + functionId + "\" failed"),
+              String::createFromUtf8(runtime, error.what()));
+        } catch (...) {
+        }
+      }
+    });
+    promise->resolve();
   } catch (...) {
     promise->reject(std::current_exception());
   }

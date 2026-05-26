@@ -15,17 +15,14 @@ NS_ASSUME_NONNULL_BEGIN
                   kind:(nullable NSString *)kind
   useMainNativeModules:(BOOL)useMainNativeModules;
 + (void)prewarmBusinessRuntime:(nullable NSString *)runtimeName;
-+ (void)dispatchHeadlessTaskWithRuntimeName:(nullable NSString *)runtimeName
-                                   taskName:(NSString *)taskName
-                                payloadJson:(nullable NSString *)payloadJson;
-+ (void)runHeadlessTaskWithRuntimeName:(nullable NSString *)runtimeName
-                              taskName:(NSString *)taskName
-                           payloadJson:(nullable NSString *)payloadJson;
-+ (void)callRuntimeFunctionWithRuntimeName:(nullable NSString *)runtimeName
-                                functionId:(NSString *)functionId
-                                  argsJson:(nullable NSString *)argsJson
-                                   resolve:(RCTPromiseResolveBlock)resolve
-                                    reject:(RCTPromiseRejectBlock)reject;
++ (void)callWithRuntimeName:(nullable NSString *)runtimeName
+                 functionId:(NSString *)functionId
+                   argsJson:(nullable NSString *)argsJson
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject;
++ (void)scheduleWithRuntimeName:(nullable NSString *)runtimeName
+                     functionId:(NSString *)functionId
+                       argsJson:(nullable NSString *)argsJson;
 + (void)completeRuntimeFunctionCallWithCallId:(NSString *)callId
                                    resultJson:(nullable NSString *)resultJson
                                     errorJson:(nullable NSString *)errorJson;

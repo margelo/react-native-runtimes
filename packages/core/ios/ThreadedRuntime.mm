@@ -16,7 +16,6 @@ static NSString *const ThreadedRuntimeDefaultBusinessRuntimeName = @"business-ru
 static NSString *const ThreadedRuntimeDefaultHostAppName = @"ThreadedRuntimeHost";
 static NSString *const ThreadedRuntimeDefaultRuntimeKind = @"threaded-runtime";
 static NSString *const ThreadedRuntimeBusinessRuntimeKind = @"business-runtime";
-static NSString *const ThreadedRuntimeHeadlessTaskRunnerModule = @"ThreadedRuntimeHeadlessTaskRunner";
 static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFunctionRunner";
 
 @interface ThreadedRuntime (Private)
@@ -213,17 +212,7 @@ static NSMutableDictionary<NSString *, NSString *> *ThreadedRuntimeKinds()
   return kinds;
 }
 
-static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, NSString *> *> *> *ThreadedRuntimePendingHeadlessTasks()
-{
-  static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, NSString *> *> *> *tasks;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    tasks = [NSMutableDictionary new];
-  });
-  return tasks;
-}
-
-static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, NSString *> *> *> *ThreadedRuntimePendingFunctionCalls()
+static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, NSString *> *> *> *ThreadedRuntimePendingFunctionRequests()
 {
   static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, NSString *> *> *> *calls;
   static dispatch_once_t onceToken;
@@ -341,49 +330,15 @@ static NSDictionary *configuredLaunchOptions;
   useMainNativeModules:YES];
 }
 
-+ (void)dispatchHeadlessTaskWithRuntimeName:(NSString *)runtimeName
-                                   taskName:(NSString *)taskName
-                                payloadJson:(NSString *)payloadJson
-{
-  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
-  NSDictionary<NSString *, NSString *> *task = @{
-    @"taskName" : taskName ?: @"",
-    @"payloadJson" : payloadJson ?: @"null",
-  };
-
-  @synchronized(self) {
-    NSMutableArray<NSDictionary<NSString *, NSString *> *> *pending =
-        ThreadedRuntimePendingHeadlessTasks()[normalizedRuntimeName];
-    if (pending == nil) {
-      pending = [NSMutableArray new];
-      ThreadedRuntimePendingHeadlessTasks()[normalizedRuntimeName] = pending;
-    }
-    [pending addObject:task];
-  }
-
-  dispatch_async(ThreadedRuntimeQueue(), ^{
-    RCTHost *host = [self ensureHostWithRuntimeName:normalizedRuntimeName];
-    [self startRuntimeAndFlushWithRuntimeName:normalizedRuntimeName host:host];
-  });
-  NSLog(
-      @"[ThreadedRuntime] headless task queued runtimeName=%@ taskName=%@",
-      normalizedRuntimeName,
-      taskName);
-  RCTLogInfo(
-      @"[ThreadedRuntime] headless task queued runtimeName=%@ taskName=%@",
-      normalizedRuntimeName,
-      taskName);
-}
-
-+ (void)callRuntimeFunctionWithRuntimeName:(NSString *)runtimeName
-                                functionId:(NSString *)functionId
-                                  argsJson:(NSString *)argsJson
-                                   resolve:(RCTPromiseResolveBlock)resolve
-                                    reject:(RCTPromiseRejectBlock)reject
++ (void)callWithRuntimeName:(NSString *)runtimeName
+                 functionId:(NSString *)functionId
+                   argsJson:(NSString *)argsJson
+                    resolve:(RCTPromiseResolveBlock)resolve
+                     reject:(RCTPromiseRejectBlock)reject
 {
   NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
   NSString *callId = [NSUUID UUID].UUIDString;
-  NSDictionary<NSString *, NSString *> *call = @{
+  NSDictionary<NSString *, NSString *> *request = @{
     @"functionId" : functionId ?: @"",
     @"argsJson" : argsJson ?: @"[]",
     @"callId" : callId,
@@ -393,12 +348,12 @@ static NSDictionary *configuredLaunchOptions;
     ThreadedRuntimeFunctionResolves()[callId] = [resolve copy];
     ThreadedRuntimeFunctionRejects()[callId] = [reject copy];
     NSMutableArray<NSDictionary<NSString *, NSString *> *> *pending =
-        ThreadedRuntimePendingFunctionCalls()[normalizedRuntimeName];
+        ThreadedRuntimePendingFunctionRequests()[normalizedRuntimeName];
     if (pending == nil) {
       pending = [NSMutableArray new];
-      ThreadedRuntimePendingFunctionCalls()[normalizedRuntimeName] = pending;
+      ThreadedRuntimePendingFunctionRequests()[normalizedRuntimeName] = pending;
     }
-    [pending addObject:call];
+    [pending addObject:request];
   }
 
   dispatch_async(ThreadedRuntimeQueue(), ^{
@@ -410,6 +365,36 @@ static NSDictionary *configuredLaunchOptions;
       normalizedRuntimeName,
       functionId,
       callId);
+}
+
++ (void)scheduleWithRuntimeName:(NSString *)runtimeName
+                     functionId:(NSString *)functionId
+                       argsJson:(NSString *)argsJson
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  NSDictionary<NSString *, NSString *> *request = @{
+    @"functionId" : functionId ?: @"",
+    @"argsJson" : argsJson ?: @"[]",
+  };
+
+  @synchronized(self) {
+    NSMutableArray<NSDictionary<NSString *, NSString *> *> *pending =
+        ThreadedRuntimePendingFunctionRequests()[normalizedRuntimeName];
+    if (pending == nil) {
+      pending = [NSMutableArray new];
+      ThreadedRuntimePendingFunctionRequests()[normalizedRuntimeName] = pending;
+    }
+    [pending addObject:request];
+  }
+
+  dispatch_async(ThreadedRuntimeQueue(), ^{
+    RCTHost *host = [self ensureHostWithRuntimeName:normalizedRuntimeName];
+    [self startRuntimeAndFlushWithRuntimeName:normalizedRuntimeName host:host];
+  });
+  NSLog(
+      @"[ThreadedRuntime] runtime function scheduled runtimeName=%@ functionId=%@",
+      normalizedRuntimeName,
+      functionId);
 }
 
 + (void)completeRuntimeFunctionCallWithCallId:(NSString *)callId
@@ -438,19 +423,11 @@ static NSDictionary *configuredLaunchOptions;
   resolve(resultJson ?: @"null");
 }
 
-+ (void)runHeadlessTaskWithRuntimeName:(NSString *)runtimeName
-                              taskName:(NSString *)taskName
-                           payloadJson:(NSString *)payloadJson
-{
-  [self dispatchHeadlessTaskWithRuntimeName:runtimeName taskName:taskName payloadJson:payloadJson];
-}
-
 + (void)destroyRuntime:(NSString *)runtimeName
 {
   NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
   @synchronized(self) {
-    [ThreadedRuntimePendingHeadlessTasks() removeObjectForKey:normalizedRuntimeName];
-    [ThreadedRuntimePendingFunctionCalls() removeObjectForKey:normalizedRuntimeName];
+    [ThreadedRuntimePendingFunctionRequests() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimeStartingRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeStartedRuntimeNames() removeObject:normalizedRuntimeName];
   }
@@ -469,8 +446,7 @@ static NSDictionary *configuredLaunchOptions;
   [ThreadedRuntimeTurboModuleDelegates() removeAllObjects];
   [ThreadedRuntimeKinds() removeAllObjects];
   @synchronized(self) {
-    [ThreadedRuntimePendingHeadlessTasks() removeAllObjects];
-    [ThreadedRuntimePendingFunctionCalls() removeAllObjects];
+    [ThreadedRuntimePendingFunctionRequests() removeAllObjects];
     [ThreadedRuntimeStartingRuntimeNames() removeAllObjects];
     [ThreadedRuntimeStartedRuntimeNames() removeAllObjects];
   }
@@ -502,8 +478,7 @@ static NSDictionary *configuredLaunchOptions;
     BOOL shouldStart = NO;
     @synchronized(self) {
       if ([ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName]) {
-        [self flushHeadlessTasksWithRuntimeName:runtimeName host:host];
-        [self flushRuntimeFunctionCallsWithRuntimeName:runtimeName host:host];
+        [self flushRuntimeFunctionRequestsWithRuntimeName:runtimeName host:host];
         return;
       }
       if (![ThreadedRuntimeStartingRuntimeNames() containsObject:runtimeName]) {
@@ -539,61 +514,34 @@ static NSDictionary *configuredLaunchOptions;
     [ThreadedRuntimeStartingRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeStartedRuntimeNames() addObject:normalizedRuntimeName];
   }
-  [self flushHeadlessTasksWithRuntimeName:normalizedRuntimeName host:host];
-  [self flushRuntimeFunctionCallsWithRuntimeName:normalizedRuntimeName host:host];
+  [self flushRuntimeFunctionRequestsWithRuntimeName:normalizedRuntimeName host:host];
 }
 
-+ (void)flushHeadlessTasksWithRuntimeName:(NSString *)runtimeName host:(RCTHost *)host
++ (void)flushRuntimeFunctionRequestsWithRuntimeName:(NSString *)runtimeName host:(RCTHost *)host
 {
-  NSArray<NSDictionary<NSString *, NSString *> *> *tasks;
+  NSArray<NSDictionary<NSString *, NSString *> *> *requests;
   @synchronized(self) {
     if (![ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName]) {
       return;
     }
-    tasks = [ThreadedRuntimePendingHeadlessTasks()[runtimeName] copy];
-    [ThreadedRuntimePendingHeadlessTasks() removeObjectForKey:runtimeName];
+    requests = [ThreadedRuntimePendingFunctionRequests()[runtimeName] copy];
+    [ThreadedRuntimePendingFunctionRequests() removeObjectForKey:runtimeName];
   }
 
-  for (NSDictionary<NSString *, NSString *> *task in tasks) {
-    NSString *taskName = task[@"taskName"] ?: @"";
-    NSString *payloadJson = task[@"payloadJson"] ?: @"null";
-    [host callFunctionOnJSModule:ThreadedRuntimeHeadlessTaskRunnerModule
-                          method:@"run"
-                            args:@[ taskName, payloadJson, runtimeName ]];
-    NSLog(
-        @"[ThreadedRuntime] headless task dispatched runtimeName=%@ taskName=%@",
-        runtimeName,
-        taskName);
-    RCTLogInfo(
-        @"[ThreadedRuntime] headless task dispatched runtimeName=%@ taskName=%@",
-        runtimeName,
-        taskName);
-  }
-}
-
-+ (void)flushRuntimeFunctionCallsWithRuntimeName:(NSString *)runtimeName host:(RCTHost *)host
-{
-  NSArray<NSDictionary<NSString *, NSString *> *> *calls;
-  @synchronized(self) {
-    if (![ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName]) {
-      return;
-    }
-    calls = [ThreadedRuntimePendingFunctionCalls()[runtimeName] copy];
-    [ThreadedRuntimePendingFunctionCalls() removeObjectForKey:runtimeName];
-  }
-
-  for (NSDictionary<NSString *, NSString *> *call in calls) {
-    NSString *functionId = call[@"functionId"] ?: @"";
-    NSString *argsJson = call[@"argsJson"] ?: @"[]";
-    NSString *callId = call[@"callId"] ?: @"";
+  for (NSDictionary<NSString *, NSString *> *request in requests) {
+    NSString *functionId = request[@"functionId"] ?: @"";
+    NSString *argsJson = request[@"argsJson"] ?: @"[]";
+    NSString *callId = request[@"callId"];
+    NSString *method = callId.length > 0 ? @"run" : @"schedule";
+    NSArray *args = callId.length > 0 ? @[ functionId, argsJson, callId, runtimeName ] : @[ functionId, argsJson, runtimeName ];
     [host callFunctionOnJSModule:ThreadedRuntimeFunctionRunnerModule
-                          method:@"run"
-                            args:@[ functionId, argsJson, callId, runtimeName ]];
+                          method:method
+                            args:args];
     RCTLogInfo(
         @"[ThreadedRuntime] runtime function dispatched runtimeName=%@ functionId=%@ callId=%@",
         runtimeName,
         functionId,
-        callId);
+        callId ?: @"<scheduled>");
   }
 }
 
@@ -709,37 +657,7 @@ RCT_EXPORT_METHOD(prewarmRuntimeWithOptions
   }
 }
 
-RCT_EXPORT_METHOD(runHeadlessTask
-                  : (NSString *)runtimeName taskName
-                  : (NSString *)taskName payloadJson
-                  : (NSString *)payloadJson resolver
-                  : (RCTPromiseResolveBlock)resolve rejecter
-                  : (RCTPromiseRejectBlock)reject)
-{
-  @try {
-    [ThreadedRuntime runHeadlessTaskWithRuntimeName:runtimeName taskName:taskName payloadJson:payloadJson];
-    resolve(nil);
-  } @catch (NSException *exception) {
-    reject(@"ERR_THREADED_RUNTIME_HEADLESS_TASK", exception.reason, nil);
-  }
-}
-
-RCT_EXPORT_METHOD(dispatchHeadlessTask
-                  : (NSString *)runtimeName taskName
-                  : (NSString *)taskName payloadJson
-                  : (NSString *)payloadJson resolver
-                  : (RCTPromiseResolveBlock)resolve rejecter
-                  : (RCTPromiseRejectBlock)reject)
-{
-  @try {
-    [ThreadedRuntime dispatchHeadlessTaskWithRuntimeName:runtimeName taskName:taskName payloadJson:payloadJson];
-    resolve(nil);
-  } @catch (NSException *exception) {
-    reject(@"ERR_THREADED_RUNTIME_HEADLESS_TASK", exception.reason, nil);
-  }
-}
-
-RCT_EXPORT_METHOD(callRuntimeFunction
+RCT_EXPORT_METHOD(call
                   : (NSString *)runtimeName functionId
                   : (NSString *)functionId argsJson
                   : (NSString *)argsJson resolver
@@ -747,11 +665,26 @@ RCT_EXPORT_METHOD(callRuntimeFunction
                   : (RCTPromiseRejectBlock)reject)
 {
   @try {
-    [ThreadedRuntime callRuntimeFunctionWithRuntimeName:runtimeName
-                                            functionId:functionId
-                                              argsJson:argsJson
-                                               resolve:resolve
-                                                reject:reject];
+    [ThreadedRuntime callWithRuntimeName:runtimeName
+                              functionId:functionId
+                                argsJson:argsJson
+                                 resolve:resolve
+                                  reject:reject];
+  } @catch (NSException *exception) {
+    reject(@"ERR_THREADED_RUNTIME_FUNCTION", exception.reason, nil);
+  }
+}
+
+RCT_EXPORT_METHOD(schedule
+                  : (NSString *)runtimeName functionId
+                  : (NSString *)functionId argsJson
+                  : (NSString *)argsJson resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject)
+{
+  @try {
+    [ThreadedRuntime scheduleWithRuntimeName:runtimeName functionId:functionId argsJson:argsJson];
+    resolve(nil);
   } @catch (NSException *exception) {
     reject(@"ERR_THREADED_RUNTIME_FUNCTION", exception.reason, nil);
   }

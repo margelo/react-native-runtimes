@@ -22,7 +22,12 @@ class HybridThreadedRuntimeFunctions final
  public:
   HybridThreadedRuntimeFunctions() : HybridObject(TAG) {}
 
-  std::shared_ptr<Promise<std::string>> run(
+  std::shared_ptr<Promise<std::string>> call(
+      const std::string& runtimeName,
+      const std::string& functionId,
+      const std::string& argsJson) override;
+
+  std::shared_ptr<Promise<void>> schedule(
       const std::string& runtimeName,
       const std::string& functionId,
       const std::string& argsJson) override;

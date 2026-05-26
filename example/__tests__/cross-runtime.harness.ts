@@ -12,8 +12,8 @@
 //
 // What we observed when the suite was enabled (Android, dev mode, harness on
 // emulator):
-//   - The main runtime registers `ThreadedRuntimeFunctionRunner` /
-//     `ThreadedRuntimeHeadlessTaskRunner` as callable modules when
+//   - The main runtime registers `ThreadedRuntimeFunctionRunner` as a callable
+//     module when
 //     `@react-native-runtimes/core` is imported (top of ThreadedRuntime.tsx).
 //   - The worker runtime's JS bundle is loaded but the app's user-bundle code
 //     (`__r(0)` -> index.js -> .threaded-runtime/entry.js -> @react-native-runtimes/core)
