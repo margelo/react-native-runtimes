@@ -105,13 +105,8 @@ let didWarnRuntimeFunctionsNitroUnavailable = false;
 function currentRuntimeName() {
   const globals = globalThis as {
     __THREADED_RUNTIME_ENV__?: { runtimeName?: string };
-    __COMPOSE_CHAT_LIST_ENV__?: { runtimeName?: string };
   };
-  return (
-    globals.__THREADED_RUNTIME_ENV__?.runtimeName ??
-    globals.__COMPOSE_CHAT_LIST_ENV__?.runtimeName ??
-    DEFAULT_RUNTIME_NAME
-  );
+  return globals.__THREADED_RUNTIME_ENV__?.runtimeName ?? DEFAULT_RUNTIME_NAME;
 }
 
 export const MAIN_RUNTIME_NAME = 'main';
@@ -125,10 +120,8 @@ export type CurrentRuntimeInfo = {
 export function getCurrentRuntime(): CurrentRuntimeInfo {
   const globals = globalThis as {
     __THREADED_RUNTIME_ENV__?: { runtimeName?: string; kind?: string };
-    __COMPOSE_CHAT_LIST_ENV__?: { runtimeName?: string; kind?: string };
   };
-  const env =
-    globals.__THREADED_RUNTIME_ENV__ ?? globals.__COMPOSE_CHAT_LIST_ENV__;
+  const env = globals.__THREADED_RUNTIME_ENV__;
   if (env?.runtimeName) {
     return {
       isMain: false,
