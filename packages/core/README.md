@@ -21,6 +21,28 @@ The package owns the JS registry and host API:
 - `ThreadedRuntimeHost`
 - `ThreadedRuntime.prewarm/preload/runHeadlessTask/run/destroy/destroyAll/getRuntimeNames`
 
+## Expo
+
+This package supports Expo via an optional config plugin. The plugin runs during
+`expo prebuild` and ensures Android `minSdkVersion` is set to 24 or higher.
+The package does **not** require Expo at runtime.
+
+Add the plugin to your `app.config.ts`:
+
+```ts
+export default {
+  plugins: ['@react-native-runtimes/core'],
+};
+```
+
+In most Expo projects `@expo/config-plugins` is already available. If you use a
+custom or minimal Expo setup and `expo prebuild` fails with
+`Cannot find module '@expo/config-plugins'`, install it explicitly:
+
+```sh
+npm install --save-dev @expo/config-plugins
+```
+
 ## Setup
 
 ### 1. Configure Metro

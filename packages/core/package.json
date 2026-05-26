@@ -5,11 +5,19 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "react-native": "src/index.ts",
+  "expo": {
+    "plugin": "./plugin/build/index.js"
+  },
   "scripts": {
-    "specs": "nitrogen"
+    "specs": "nitrogen",
+    "build:plugin": "tsc -p plugin/tsconfig.json",
+    "prepack": "bun run build:plugin"
   },
   "files": [
-    "android",
+    "android/src",
+    "android/build.gradle",
+    "android/CMakeLists.txt",
+    "android/fix-prefab.gradle",
     "cpp",
     "ios",
     "metro.d.ts",
@@ -18,6 +26,7 @@
     "nitrogen/generated",
     "nitro.json",
     "NativeComposeThreadedRuntime.podspec",
+    "plugin/build",
     "README.md",
     "runtime-function-babel-plugin.js",
     "src"
@@ -30,11 +39,19 @@
     }
   },
   "devDependencies": {
-    "nitrogen": "^0.35.7"
+    "@expo/config-plugins": "^9.0.0",
+    "nitrogen": "^0.35.7",
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
+    "@expo/config-plugins": ">=8.0.0",
     "react": "*",
     "react-native": "*",
     "react-native-nitro-modules": "*"
+  },
+  "peerDependenciesMeta": {
+    "@expo/config-plugins": {
+      "optional": true
+    }
   }
 }
