@@ -1,0 +1,127 @@
+---
+title: Prewarming
+description: Start a runtime before its UI is visible to remove cold-start latency.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Prewarming creates and starts a named secondary runtime **before** a surface
+needs it. The runtime is ready when the first surface mounts, so the user sees
+no cold-start delay.
+
+```tsx
+import { ThreadedRuntime } from '@react-native-runtimes/core';
+
+await ThreadedRuntime.prewarm('conversation-release-room-runtime');
+```
+
+`preload` is an alias of `prewarm`:
+
+```tsx
+await ThreadedRuntime.preload('conversation-release-room-runtime');
+```
+
+`ThreadedScreen` preloads its runtime by default, but that preload runs from a
+React effect — meaning the runtime starts at roughly the same time the screen
+mounts. For low-latency navigation, **prewarm earlier**, such as while a
+picker or inbox is visible:
+
+```tsx
+const runtimeNames = conversations.map(
+  conversation => `conversation-${conversation.id}-runtime`,
+);
+
+useEffect(() => {
+  for (const runtimeName of runtimeNames) {
+    void ThreadedRuntime.prewarm(runtimeName);
+  }
+}, [runtimeNames]);
+```
+
+On tap, prewarm the selected runtime again before switching screens. The call
+is cheap when the runtime already exists, so this is safe to do liberally:
+
+```tsx
+function openConversation(conversationId: string) {
+  void ThreadedRuntime.prewarm(`conversation-${conversationId}-runtime`);
+  setSelectedConversationId(conversationId);
+}
+```
+
+<Callout type="info" title="Best-effort + cheap when warm">
+  Calling `prewarm` on an already-started runtime is essentially free. Treat
+  it as a hint, not an expensive imperative call.
+</Callout>
+
+## Native prewarm
+
+Prewarm from native code for runtimes that should exist before any JS runs —
+typically your `background` runtime or a chat inbox.
+
+<Tabs items={['Android (Kotlin)', 'iOS (Swift)', 'C++']}>
+
+<Tab value="Android (Kotlin)">
+
+```kotlin
+ThreadedRuntime.prewarmRuntime(
+  applicationContext,
+  "conversation-release-room-runtime",
+)
+```
+
+</Tab>
+<Tab value="iOS (Swift)">
+
+```swift
+ThreadedRuntime.prewarmRuntime("conversation-release-room-runtime")
+```
+
+</Tab>
+<Tab value="C++">
+
+```cpp
+#include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
+
+nativecompose::threadedruntime::prewarmRuntime(
+  "conversation-release-room-runtime"
+);
+```
+
+</Tab>
+</Tabs>
+
+## Releasing runtimes
+
+Destroy a named runtime when it no longer owns useful work:
+
+```tsx
+await ThreadedRuntime.destroy('conversation-release-room-runtime');
+```
+
+For route components, set `destroyOnUnmount` when the screen should release
+the runtime immediately:
+
+```tsx
+<ThreadedScreen
+  component={ConversationScreen}
+  destroyOnUnmount
+  props={{ conversationId }}
+  runtimeName={`conversation-${conversationId}-runtime`}
+/>
+```
+
+<Callout type="warn" title="Don't destroy app-lifetime runtimes">
+  A `background` runtime that owns sync, caching, or queues should never be
+  destroyed during normal app use. Only call `destroy` for runtimes you're
+  sure no one else needs.
+</Callout>
+
+## Strategy cheat sheet
+
+| Situation | Recommendation |
+| --- | --- |
+| User likely to open screen X within 5 seconds | Prewarm X's runtime from a parent screen's effect |
+| App-lifetime background work | Prewarm from native at startup |
+| Per-conversation chat | Prewarm a small N (e.g. 3–5 visible inbox items) ahead, prewarm the selected one on tap |
+| Rarely-used heavy feature | Don't prewarm — let the surface start the runtime on demand |

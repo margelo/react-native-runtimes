@@ -1,0 +1,82 @@
+---
+title: Performance tips
+description: Practical advice for getting the most out of threaded runtimes and shared state.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Prewarm what the user will see next
+
+Prewarming a runtime is cheap if it's already warm and one-time-expensive if
+it isn't. The best time to start a runtime is **while the user is doing
+something else** — reading a list, scrolling an inbox, scrubbing onboarding.
+
+```tsx
+useEffect(() => {
+  for (const runtimeName of visibleConversationRuntimes) {
+    void ThreadedRuntime.prewarm(runtimeName);
+  }
+}, [visibleConversationRuntimes]);
+```
+
+For app-lifetime runtimes (background, sync engines), [prewarm from native
+startup](/docs/threaded-runtime/prewarming#native-prewarm) so the runtime
+exists before any JS asks for it.
+
+## Keep props small
+
+Every prop change crosses the threaded boundary as JSON. Pass ids, cursors,
+and config values — not full datasets. Use [shared state](/docs/shared-state/overview)
+for anything large or mutable.
+
+<Callout type="warn" title="A 1 MB prop is a 1 MB serialization cost on every change">
+  And every change re-serializes it. Push large data through a shared path
+  and pass only its identity through props.
+</Callout>
+
+## Prefer `update` over `set` for derived writes
+
+When a write depends on the current value, use `update`. It reads under the
+native lock and writes back atomically — no two-runtime race.
+
+```tsx
+await messages.update(current => [...(current ?? []), newMessage]);
+```
+
+## Pre-declare hot paths
+
+For state that the app touches early, list it in
+`createSharedStore({ subtrees: [...] })` so it hydrates on store creation —
+no first-touch latency.
+
+## Avoid runtime-per-mount
+
+Pick runtime names by *logical owner* (conversation id, feed type, business
+unit), not by component instance. Reusing the runtime across mounts means the
+JS heap, cached requires, and registered loaders all stay warm.
+
+## Tear down what you don't need
+
+Long-running runtimes hold JS heap. For runtimes that own a single transient
+screen, use `destroyOnUnmount` on `ThreadedScreen` so they release when the
+user leaves.
+
+```tsx
+<ThreadedScreen
+  component={ConversationScreen}
+  destroyOnUnmount
+  props={{ conversationId }}
+  runtimeName={`conversation-${conversationId}-runtime`}
+/>
+```
+
+App-lifetime runtimes (background, sync) should not be destroyed.
+
+## Measure both sides
+
+When evaluating "does threading help", compare:
+
+- The main-runtime baseline (LegendList on main).
+- The threaded version (LegendList on its own runtime).
+
+The sample app has both screens for exactly this purpose.

@@ -1,0 +1,72 @@
+---
+title: Runtime functions
+description: Schedule a function on another runtime and await its result.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **runtime function** is a function that can be scheduled on a named runtime
+and awaited from somewhere else. Two shapes:
+
+- `call(fn).on(runtimeName)(...args)` — the caller picks the runtime
+- `'background'` directive — the function always runs on the same runtime
+
+Both compile to the same underlying mechanism: a registered function on the
+target runtime, called by stable id, with JSON-serialized arguments.
+
+## Caller picks the runtime
+
+```tsx
+import { call, runtimeFunction } from '@react-native-runtimes/core';
+
+export const fibonacci = runtimeFunction((n: number) => {
+  return fib(n);
+});
+
+const result = await call(fibonacci).on('worker-runtime')(38);
+```
+
+This is the right shape when the same function might be called from different
+runtimes, or against different worker pools.
+
+## Function pinned to one runtime
+
+```tsx
+async function refreshCache(key: string) {
+  'background';
+  await cacheStore.hydrate();
+  return cacheStore.get(key);
+}
+
+const value = await refreshCache('settings');
+```
+
+The first directive (`'background'`, `'main'`, or any runtime name) is the
+target. Metro rewrites the function into a registered runtime function plus a
+local scheduled alias, so call sites stay ordinary.
+
+<Callout type="info" title="Use the directive for fixed-runtime helpers">
+  When a function semantically belongs to one runtime, the directive form
+  keeps the call site readable. Use the explicit `call(fn).on(...)` form when
+  the caller should choose.
+</Callout>
+
+## How lookup works
+
+1. Metro assigns each exported `runtimeFunction(...)` a stable id and registers it in the bundle.
+2. Both runtimes load the same bundle, so they install the same registration table.
+3. To call, native sends the target runtime name, the stable id, and JSON-stringified arguments.
+4. The target runtime looks up the loader, caches the loaded JS function, calls it with parsed arguments, and serializes the return value back to the caller.
+
+Code is never sent over the wire. Only **id + args**.
+
+## Constraints
+
+- Arguments and return values must be JSON-serializable.
+- The function must be **exported** and wrapped in `runtimeFunction` *or* use a top-level directive.
+- Directive functions must be declared at module scope.
+- Closures aren't captured — pass everything through arguments.
+- Inline lambdas and non-exported functions are not supported.
+
+See [Scheduling functions on another runtime](/docs/threaded-runtime/scheduling-functions)
+for the full API.

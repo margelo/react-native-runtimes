@@ -1,0 +1,13 @@
+node_modules
+.next
+.source
+.turbo
+.vercel
+out
+dist
+*.tsbuildinfo
+.DS_Store
+.open-next
+.wrangler
+.dev.vars
+cloudflare-env.d.ts

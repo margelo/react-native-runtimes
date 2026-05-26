@@ -1,0 +1,61 @@
+---
+title: Locking and revisions
+description: How concurrent writes work, why prefer update over set, and how subscriptions fan out across related paths.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Each path has a native state payload and a revision. Revisions are integers
+that increment whenever the payload changes:
+
+```tsx
+const messages = chatStore.path<Message[]>('conversations.release-room');
+
+await messages.hydrate();
+console.log(messages.getRevision());
+```
+
+## Notification fan-out
+
+Subscribers are invalidated for related paths. A subscriber on
+`conversations` will be notified when `conversations.release-room` changes,
+and a subscriber on `conversations.release-room` will be notified when
+`conversations` changes.
+
+That makes broad subscriptions ("anything under conversations changed") cheap
+to express, and narrow subscriptions ("messages of one conversation") still
+update when a parent path is replaced.
+
+## Concurrent writers
+
+Prefer **one writer per path**. If two runtimes can update the same path, use
+`update(...)` or a path reducer instead of replacing stale snapshots.
+
+```tsx
+// ❌ Two runtimes race; whichever runs last clobbers the other.
+const current = await messages.get();
+await messages.set([...current, newMessage]);
+
+// ✅ The native lock guards read-modify-write.
+await messages.update(current => [...(current ?? []), newMessage]);
+```
+
+<Callout title="When set is fine" type="info">
+  `set` is correct when the new value doesn't depend on the previous one —
+  for example, setting the current theme, or replacing the full snapshot from
+  a fresh server response.
+</Callout>
+
+## Reducers via slices
+
+If a store needs a richer write path (typed actions, slice reducers), use the
+`slices` option on `createSharedStore`. See
+[Background thread architecture](/docs/threaded-runtime/business-logic-executor#shared-zustand-store)
+for a fully wired example with actions, slices, and persistence.
+
+## Mental model
+
+- **Path** = key in the native C++ store
+- **Revision** = integer that increments on each write
+- **Subscriber** = a JS closure tied to a path; the native side calls it when the path or any ancestor changes
+- **Lock** = scoped to a path; `update()` holds it for the duration of the reducer

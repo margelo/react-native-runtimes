@@ -1,0 +1,194 @@
+---
+title: Installation
+description: Install the runtime and shared-state packages and configure iOS, Android, and Metro.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Install the two runtime packages plus `react-native-nitro-modules` (a peer
+dependency for both):
+
+```sh
+npm install @react-native-runtimes/core @react-native-runtimes/state react-native-nitro-modules
+```
+
+
+
+## Configure the platforms
+
+<Tabs items={['iOS', 'Android', 'Metro']}>
+<Tab value="iOS">
+
+Install pods after adding the packages:
+
+```sh
+cd ios
+bundle exec pod install
+```
+
+Configure the threaded runtime from the app delegate **before any secondary
+runtime is created**:
+
+```swift title="AppDelegate.swift"
+import NativeComposeThreadedRuntime
+
+ThreadedRuntime.configure(
+  withReactNativeDelegate: delegate,
+  launchOptions: launchOptions
+)
+```
+
+If you want a runtime ready at startup, prewarm it from Swift:
+
+```swift
+ThreadedRuntime.prewarmRuntime("conversation-inbox-runtime")
+```
+
+<Callout type="info" title="When to prewarm from native">
+  Native prewarm is the fastest way to be ready when the first surface mounts —
+  use it for any runtime that the user is likely to see in the first navigation.
+  Everything else can be prewarmed from JS effects.
+</Callout>
+
+See [iOS setup](/docs/getting-started/ios-setup) for the full reference.
+
+</Tab>
+<Tab value="Android">
+
+Add the Nitro and shared-state packages so threaded runtimes can find them.
+These are not part of the generated host package list, so you must register
+them yourself:
+
+```kotlin title="MainApplication.kt"
+import com.nativecompose.threadedruntime.ThreadedRuntime
+import com.nativecompose.threadedzustand.ThreadedZustandPackage
+import com.margelo.nitro.NitroModulesPackage
+
+class MainApplication : Application(), ReactApplication {
+  override fun onCreate() {
+    super.onCreate()
+
+    ThreadedRuntime.setExtraReactPackagesProvider {
+      listOf(
+        NitroModulesPackage(),
+        ThreadedZustandPackage(),
+      )
+    }
+
+    loadReactNative(this)
+  }
+}
+```
+
+Prewarm a named runtime from Kotlin when useful:
+
+```kotlin
+ThreadedRuntime.prewarmRuntime(
+  applicationContext,
+  "conversation-inbox-runtime",
+)
+```
+
+If a long-lived **background business runtime** should expose the same native
+modules as the main app runtime, provide the app's package list and prewarm it
+as a business runtime:
+
+```kotlin
+import com.facebook.react.PackageList
+import com.nativecompose.threadedruntime.ThreadedRuntime
+
+ThreadedRuntime.setMainReactPackagesProvider {
+  PackageList(this).packages
+}
+
+ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "background")
+```
+
+See [Android setup](/docs/getting-started/android-setup) for the full
+reference.
+
+</Tab>
+<Tab value="Metro">
+
+Wrap your Metro config so the package can generate the threaded entry file:
+
+```js title="metro.config.js"
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const { withThreadedRuntime } = require('@react-native-runtimes/core/metro');
+
+const config = {};
+
+module.exports = withThreadedRuntime(
+  mergeConfig(getDefaultConfig(__dirname), config),
+  {
+    roots: ['App.tsx', 'src'],
+    generatedDir: '.threaded-runtime',
+    generatedEntry: 'entry.js',
+  },
+);
+```
+
+Add the generated folder to `.gitignore`:
+
+```text title=".gitignore"
+.threaded-runtime/
+```
+
+Load the generated entry only inside threaded runtimes:
+
+```js title="index.js"
+if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
+  require('./.threaded-runtime/entry');
+}
+```
+
+The generated entry registers lazy component loaders and the
+`ThreadedRuntimeHost` root used by native.
+
+<Callout type="info" title="Tip: per-runtime startup code">
+  For startup code that should only run on a specific runtime, create a
+  root-level file named `index.<runtime>.ts` — for example
+  `index.background.ts`. The generated entry emits a static conditional
+  require for it and matches `<runtime>` against
+  `global.__THREADED_RUNTIME_ENV__.kind` and `.runtimeName`.
+</Callout>
+
+See [Metro setup](/docs/getting-started/metro-setup) for the full plugin
+options.
+
+</Tab>
+</Tabs>
+
+## Verify the install
+
+Render the simplest possible threaded surface:
+
+```tsx title="App.tsx"
+import { OnRuntime } from '@react-native-runtimes/core';
+import { Text, View } from 'react-native';
+
+function Hello() {
+  return (
+    <View>
+      <Text>Hello from a second JS runtime!</Text>
+    </View>
+  );
+}
+
+export default function App() {
+  return (
+    <OnRuntime name="hello-runtime">
+      <Hello />
+    </OnRuntime>
+  );
+}
+```
+
+Rebuild the app. If you see the text, the runtime, the Metro plugin, and the
+native side are all wired up correctly.
+
+<Callout type="success" title="Next">
+  Read [Rendering components on a background runtime](/docs/threaded-runtime/render-components)
+  to learn the full `OnRuntime` / `ThreadedScreen` / `threadedComponent` API.
+</Callout>

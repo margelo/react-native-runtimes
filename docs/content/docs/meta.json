@@ -1,0 +1,16 @@
+{
+  "title": "Documentation",
+  "pages": [
+    "index",
+    "---Get started---",
+    "getting-started",
+    "---Concepts---",
+    "concepts",
+    "---Reference---",
+    "threaded-runtime",
+    "shared-state",
+    "---How-to---",
+    "recipes",
+    "guides"
+  ]
+}

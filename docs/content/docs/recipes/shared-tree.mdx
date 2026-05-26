@@ -1,0 +1,63 @@
+---
+title: Shared tree (state across runtimes)
+description: Two runtimes render and write the same tree of state through path handles.
+---
+
+Use shared Zustand paths when two runtimes should update the same logical
+state.
+
+```tsx
+const sharedTreeStore = createSharedStore<SharedTreeState>({
+  name: 'threaded-tree-demo',
+  initialState: {
+    nodes: initialNodeColors,
+    interaction: {
+      lastNode: 'root',
+      lastRuntime: 'initial',
+      presses: 0,
+    },
+  },
+  subtrees: ['nodes', 'interaction'],
+});
+
+const nodes = sharedTreeStore.path<SharedTreeState['nodes']>('nodes');
+const interaction =
+  sharedTreeStore.path<SharedTreeState['interaction']>('interaction');
+```
+
+Both runtimes render the same tree and write through path handles:
+
+```tsx
+function SharedTreePanel({ runtimeLabel }: { runtimeLabel: string }) {
+  const nodeColors = nodes.use();
+  const currentInteraction = interaction.use();
+
+  async function pressNode(nodeId: SharedTreeNodeId) {
+    await nodes.set({
+      ...nodeColors,
+      [nodeId]: nextColor(nodeColors[nodeId]),
+    });
+    await interaction.set({
+      lastNode: nodeId,
+      lastRuntime: runtimeLabel,
+      presses: currentInteraction.presses + 1,
+    });
+  }
+
+  return <Tree nodes={nodeColors} onPressNode={pressNode} />;
+}
+
+<SharedTreePanel runtimeLabel="main RN" />
+
+<OnRuntime name="shared-tree-runtime">
+  <SharedTreePanel runtimeLabel="threaded RN" />
+</OnRuntime>;
+```
+
+The sample app includes this as **Shared tree**.
+
+## Why two runtimes touch the same store
+
+It's a good way to *see* the shared-state guarantees: press a node on the main
+side, and the threaded tree updates instantly — and vice versa. The same path
+handle, same revision, same notification fan-out.

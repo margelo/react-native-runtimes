@@ -1,0 +1,91 @@
+---
+title: Passing props
+description: How props cross the threaded boundary, what's serializable, and the recommended id-plus-store pattern.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Props are serialized by the main runtime and passed to the threaded surface as
+JSON. Keep them small and stable.
+
+```tsx
+<ThreadedScreen
+  component={ConversationScreen}
+  props={{
+    conversationId: 'release-room',
+    initialMessageCount: 96,
+    participants: 'Ava, Noah, Mia',
+  }}
+  runtimeName="conversation-release-room-runtime"
+/>
+```
+
+Inside the threaded component, read props normally:
+
+```tsx
+type ConversationScreenProps = {
+  conversationId: string;
+  initialMessageCount: number;
+  participants: string;
+  runtimeName?: string;
+};
+
+export const ConversationScreen = threadedComponent<ConversationScreenProps>(
+  'ConversationScreen',
+  function ConversationScreen(props) {
+    return <ConversationRoute {...props} />;
+  },
+);
+```
+
+## Rules
+
+- Props must be JSON-serializable.
+- Do not pass functions, class instances, refs, native handles, or cyclic objects.
+- Prefer ids, cursors, and config values over large datasets.
+- Use [`@react-native-runtimes/state`](/docs/shared-state/overview) for mutable or shared state.
+- Keep `runtimeName` stable for a logical owner, such as one runtime per conversation.
+
+<Callout type="warn" title="Every prop change re-serializes">
+  Each prop update crosses the boundary as JSON. A 50 KB prop that re-renders
+  60 times a second is 3 MB/s of serialization work — even if the threaded
+  side ignores it. Push that data through a [shared path](/docs/shared-state/overview)
+  instead.
+</Callout>
+
+## Recommended pattern
+
+Pass identity through props, then load or subscribe to the real data inside
+the threaded runtime:
+
+```tsx
+<ThreadedScreen
+  component={ConversationScreen}
+  props={{ conversationId }}
+  runtimeName={`conversation-${conversationId}-runtime`}
+/>
+```
+
+```tsx
+function ConversationRoute({ conversationId }: { conversationId: string }) {
+  const messages = messagesStore
+    .path<Message[]>(['conversations', conversationId])
+    .use(value => value ?? []);
+
+  return <MessageList messages={messages} />;
+}
+```
+
+The main runtime never touches the messages array. It only forwards a string
+id; the threaded runtime owns reading, rendering, and reacting to the data.
+
+## What's safe to pass
+
+| Prop shape | Pass as prop? | Notes |
+| --- | --- | --- |
+| `string`, `number`, `boolean`, `null` | ✅ | Always safe. |
+| `string[]`, `number[]` | ✅ | Fine for small arrays (under ~1 KB). |
+| `{ id, name, count }` | ✅ | Plain objects of primitives. |
+| `Message[]` (large list) | 🚫 | Use a shared path. |
+| `Date`, `Map`, `Set` | 🚫 | Not JSON; pass as ISO strings / arrays. |
+| Functions, refs, class instances | 🚫 | Cannot cross the boundary. |

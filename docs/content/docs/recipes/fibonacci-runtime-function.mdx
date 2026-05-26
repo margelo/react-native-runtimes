@@ -1,0 +1,62 @@
+---
+title: Fibonacci runtime function
+description: The smallest example of scheduling work on a named runtime and awaiting the result.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use a runtime function when the caller should **await a result** from another
+JS runtime. This is the smallest possible example.
+
+```tsx
+import { call, runtimeFunction } from '@react-native-runtimes/core';
+
+function fibonacciNumber(n: number): number {
+  if (n < 2) {
+    return n;
+  }
+
+  return fibonacciNumber(n - 1) + fibonacciNumber(n - 2);
+}
+
+export const fibonacci = runtimeFunction((n: number) => {
+  return {
+    input: n,
+    result: fibonacciNumber(n),
+    computedAt: new Date().toISOString(),
+  };
+});
+
+const result = await call(fibonacci).on('fibonacci-worker-runtime')(38);
+```
+
+The sample app includes this as the **Fibonacci** screen.
+
+<Callout type="info" title="Why this matters">
+  `fibonacciNumber(38)` blocks for hundreds of milliseconds. Running it on
+  the main runtime drops frames; running it on a worker keeps your UI
+  perfectly smooth.
+</Callout>
+
+## What to look at
+
+- The worker runtime is named **`fibonacci-worker-runtime`** — that name is the contract between caller and callee. Both reference the same string.
+- The function is `export`ed and wrapped in `runtimeFunction(...)`. Without those two, Metro can't register it.
+- Arguments and the return value are JSON-safe.
+
+## Variations
+
+Want the function to *always* live on the worker runtime? Use the directive
+shortcut so the call site stays ordinary:
+
+```tsx
+async function fibonacci(n: number) {
+  'fibonacci-worker-runtime';
+  return fibonacciNumber(n);
+}
+
+const result = await fibonacci(38);
+```
+
+See [Scheduling functions on another runtime](/docs/threaded-runtime/scheduling-functions)
+for the full API.

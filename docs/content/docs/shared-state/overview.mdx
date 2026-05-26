@@ -1,0 +1,84 @@
+---
+title: Multi-runtime Zustand
+description: A small Zustand-like API backed by a native C++ singleton so multiple runtimes can read and update the same state.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`@react-native-runtimes/state` is a small Zustand-like API backed by a native
+C++ singleton. Use it when the main runtime and threaded runtimes need to
+read and update the same state without pushing large props through a threaded
+surface.
+
+## Dynamic paths
+
+Create one store, then take native-backed path handles from it:
+
+```tsx
+import { createSharedStore } from '@react-native-runtimes/state';
+
+type ChatState = {
+  conversations: Record<string, Message[]>;
+  metadata: Record<string, { updatedAt: string | null }>;
+};
+
+export const chatStore = createSharedStore<ChatState>({
+  name: 'chat',
+  initialState: {
+    conversations: {},
+    metadata: {},
+  },
+});
+
+export function conversationMessages(conversationId: string) {
+  return chatStore.path<Message[]>(['conversations', conversationId]);
+}
+```
+
+The path is the native key. It can be a dot string or an array of segments:
+
+```tsx
+const messages = chatStore.path<Message[]>('conversations.release-room');
+const sameMessages = chatStore.path<Message[]>([
+  'conversations',
+  'release-room',
+]);
+```
+
+<Callout type="info" title="Tip: array vs. dot path">
+  Arrays are safer when segments may contain dots (UUIDs, emails). Dot strings
+  read nicer in code reviews. Pick a convention and stick with it.
+</Callout>
+
+## Read and write
+
+Subscribe from any runtime with `path.use()`:
+
+```tsx
+function Conversation({ conversationId }: { conversationId: string }) {
+  const messages = conversationMessages(conversationId).use(
+    value => value ?? [],
+  );
+
+  return <MessageList messages={messages} />;
+}
+```
+
+Write through the same path handle:
+
+```tsx
+const messages = conversationMessages(conversationId);
+
+await messages.set(nextMessages, true);
+await messages.update(current => [...(current ?? []), newMessage]);
+```
+
+The old top-level APIs still work, but new code should prefer `store.path(...)`
+because it supports paths created from ids without declaring every slice up
+front.
+
+## Reading more
+
+- [Paths](/docs/shared-state/paths) — the full path API
+- [Persistence](/docs/shared-state/persistence) — surviving runtime teardown
+- [Locking and revisions](/docs/shared-state/locking-and-revisions) — concurrency model

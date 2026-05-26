@@ -1,0 +1,112 @@
+---
+title: iOS setup
+description: Configure the threaded runtime in your iOS app delegate, install pods, and prewarm runtimes from Swift.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+<Steps>
+
+<Step>
+
+### Install pods
+
+After installing the npm packages, run pod install:
+
+```sh
+cd ios
+bundle exec pod install
+```
+
+If pod install fails with a Nitro-related error, ensure
+`react-native-nitro-modules` is in your dependencies and that you ran
+`npm install` first.
+
+</Step>
+
+<Step>
+
+### Configure the runtime from the app delegate
+
+Configure threading **before any secondary runtime is created** — typically
+the very first call in your delegate setup:
+
+```swift title="AppDelegate.swift"
+import NativeComposeThreadedRuntime
+
+@main
+class AppDelegate: RCTAppDelegate {
+  override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil
+  ) -> Bool {
+    ThreadedRuntime.configure(
+      withReactNativeDelegate: self,
+      launchOptions: launchOptions
+    )
+
+    // ... your existing setup
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+}
+```
+
+<Callout type="warn" title="Order matters">
+  If you call `prewarmRuntime` before `configure`, the runtime cannot find the
+  React Native delegate and the prewarm will fail silently.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Prewarm runtimes at launch
+
+For any runtime the user is likely to see in the first navigation, start it
+during app launch so the first surface mounts with zero delay:
+
+```swift
+ThreadedRuntime.prewarmRuntime("conversation-inbox-runtime")
+ThreadedRuntime.prewarmRuntime("messages-runtime")
+```
+
+For an app-lifetime background runtime that shares native modules with the
+main runtime, use `prewarmBusinessRuntime`:
+
+```swift
+ThreadedRuntime.prewarmBusinessRuntime("background")
+```
+
+See [Background thread architecture](/docs/threaded-runtime/business-logic-executor)
+for the full pattern.
+
+</Step>
+
+</Steps>
+
+## C++ prewarm
+
+If you need to prewarm from C++ (for example, from a Nitro module's
+constructor), use the dispatcher header:
+
+```cpp
+#include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
+
+nativecompose::threadedruntime::prewarmRuntime(
+  "conversation-release-room-runtime"
+);
+```
+
+## Common issues
+
+<Callout type="warn" title="`Undefined symbol: _NativeComposeThreadedRuntime`">
+  Re-run `pod install` and clean the build folder
+  (`xcodebuild clean` or **Product → Clean Build Folder** in Xcode).
+</Callout>
+
+<Callout type="warn" title="Threaded surfaces show up blank">
+  Confirm that your `index.js` loads `.threaded-runtime/entry` when
+  `global.__THREADED_RUNTIME_ENV__` is set — without it, the secondary runtime
+  has no components registered.
+</Callout>

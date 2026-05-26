@@ -1,0 +1,40 @@
+---
+title: Headless hydration before opening a screen
+description: Prewarm a runtime, run a headless task to load data, then open the screen against a populated store.
+---
+
+```tsx
+async function prepareAndOpen(conversationId: string) {
+  const runtimeName = `conversation-${conversationId}-runtime`;
+
+  await ThreadedRuntime.prewarm(runtimeName);
+  await ThreadedRuntime.runHeadlessTask('hydrateConversation', {
+    runtimeName,
+    payload: {
+      conversationId,
+      limit: 50,
+    },
+  });
+
+  navigation.navigate('Conversation', { conversationId });
+}
+```
+
+The flow:
+
+1. **Prewarm.** The runtime starts if not already running.
+2. **Hydrate.** A headless task fetches the first page of messages and writes them through the shared store.
+3. **Navigate.** The user lands on the conversation; the screen renders against an already-populated store.
+
+The screen has no spinner because the data is already there when it mounts.
+
+## When to use this
+
+- **List + detail flows.** Prewarm + hydrate from the list before navigating.
+- **Onboarding flows.** Hydrate the next step's data while the user reads the current step.
+- **Deep links.** When opening a deep link, prewarm and hydrate before mounting the target screen.
+
+## When *not* to use this
+
+- For lazy data the user might never see — prewarm but don't hydrate, or skip both.
+- For data with a freshness window of seconds — hydrate inside the screen so it can show stale-then-fresh.

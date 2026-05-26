@@ -1,0 +1,164 @@
+---
+title: Headless background runtime with prewarm
+description: Run JS on a named runtime without mounting UI — fetch, hydrate, decode, or update shared state before a screen opens.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+A **headless task** runs JS on a named threaded runtime without mounting any
+UI. Use it when a runtime should fetch, hydrate, decode, or update shared
+state before a screen opens.
+
+The same mechanism can also run heavier business logic away from the main JS
+runtime. See [Background thread architecture](/docs/threaded-runtime/business-logic-executor)
+for a crypto-style job queue example.
+
+## Register a task
+
+Register inside code loaded by the threaded bundle — typically a
+[per-runtime bootstrap file](/docs/getting-started/metro-setup#per-runtime-bootstrap-files):
+
+```tsx
+import { registerThreadedHeadlessTask } from '@react-native-runtimes/core';
+import { messagesStore } from './messagesStore';
+
+registerThreadedHeadlessTask<{
+  conversationId: string;
+  limit: number;
+}>('hydrateConversation', async ({ payload, runtimeName }) => {
+  const messages = await loadMessages(payload.conversationId, payload.limit);
+
+  await messagesStore
+    .path<Message[]>(['conversations', payload.conversationId])
+    .set(messages, true);
+
+  console.info(`Hydrated ${payload.conversationId} on ${runtimeName}`);
+});
+```
+
+## Dispatch from JS
+
+```tsx
+import { ThreadedRuntime } from '@react-native-runtimes/core';
+
+await ThreadedRuntime.runHeadlessTask('hydrateConversation', {
+  runtimeName: 'conversation-worker-runtime',
+  payload: {
+    conversationId: 'release-room',
+    limit: 50,
+  },
+});
+```
+
+Native starts or reuses the named runtime. If the runtime is still starting,
+the task is queued and flushed after startup.
+
+<Callout type="warn" title="The promise resolves on dispatch, not completion">
+  `runHeadlessTask` resolves when native **accepts** the dispatch, not when
+  the async task body finishes. Use shared state to observe progress, or use
+  an awaitable runtime function for request/response work.
+</Callout>
+
+## Await runtime functions instead
+
+For request/response work, use an awaitable runtime function:
+
+```tsx
+import { call, runtimeFunction } from '@react-native-runtimes/core';
+
+export const hydrateConversation = runtimeFunction(
+  async ({ conversationId }) => {
+    const messages = messagesStore.path<Message[]>([
+      'conversations',
+      conversationId,
+    ]);
+
+    await messages.hydrate();
+    return messages.get();
+  },
+);
+
+const messages = await call(hydrateConversation).on(
+  'conversation-worker-runtime',
+)({ conversationId: 'inbox' });
+```
+
+The Metro wrapper assigns the exported function a stable id and rewrites the
+`call(...).on(...)` call to dispatch it to the requested runtime. See
+[Scheduling functions on another runtime](/docs/threaded-runtime/scheduling-functions)
+for the full API contract and lookup model.
+
+## Native dispatch
+
+When JS isn't a convenient caller — for example from a foreground service or
+a notification handler — dispatch from native code instead.
+
+<Tabs items={['Android (Kotlin)', 'iOS (Swift)', 'Android (C++)', 'Apple (C++ / Obj-C++)']}>
+
+<Tab value="Android (Kotlin)">
+
+```kotlin
+ThreadedRuntime.dispatchHeadlessTask(
+  context = applicationContext,
+  runtimeName = "conversation-worker-runtime",
+  taskName = "hydrateConversation",
+  payloadJson = """{"conversationId":"release-room","limit":50}""",
+)
+```
+
+</Tab>
+<Tab value="iOS (Swift)">
+
+```swift
+ThreadedRuntime.dispatchHeadlessTask(
+  withRuntimeName: "conversation-worker-runtime",
+  taskName: "hydrateConversation",
+  payloadJson: #"{"conversationId":"release-room","limit":50}"#
+)
+```
+
+</Tab>
+<Tab value="Android (C++)">
+
+```cpp
+#include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
+
+nativecompose::threadedruntime::dispatchHeadlessTask(
+  env,
+  applicationContext,
+  "conversation-worker-runtime",
+  "hydrateConversation",
+  R"({"conversationId":"release-room","limit":50})"
+);
+```
+
+</Tab>
+<Tab value="Apple (C++ / Obj-C++)">
+
+```cpp
+#include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
+
+nativecompose::threadedruntime::dispatchHeadlessTask(
+  "conversation-worker-runtime",
+  "hydrateConversation",
+  R"({"conversationId":"release-room","limit":50})"
+);
+```
+
+</Tab>
+</Tabs>
+
+## Typical flow
+
+1. Prewarm the runtime while the user is still on the previous screen.
+2. Dispatch a headless hydration task to that runtime.
+3. Store durable output in shared state or native storage.
+4. Open a `ThreadedScreen` using the same runtime name.
+5. The screen reads the already-warmed data from the shared store.
+
+<Callout type="info" title="Why this layered approach helps">
+  By the time the user navigates, the runtime is alive, the data is loaded,
+  and the screen mounts against a populated store. The transition feels
+  instant.
+</Callout>

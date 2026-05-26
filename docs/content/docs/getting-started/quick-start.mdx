@@ -1,0 +1,198 @@
+---
+title: Quick start
+description: Go from zero to rendering on a second JS runtime in about five minutes.
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+This guide takes a React Native app and lands a top-level component on a
+second JavaScript runtime. If you already have an app set up,
+[skip to step 2](#install-the-packages).
+
+<Callout title="Before you start" type="info">
+  Make sure you have a working **native React Native environment** for iOS
+  and Android set up.
+</Callout>
+
+<Steps>
+
+<Step>
+
+### Create or open a React Native app
+
+```sh
+npx @react-native-community/cli@latest init MyApp
+cd MyApp
+```
+
+</Step>
+
+<Step>
+
+### Install the packages
+
+```sh
+npm install @react-native-runtimes/core @react-native-runtimes/state react-native-nitro-modules
+```
+
+`react-native-nitro-modules` is required — both packages are Nitro-backed.
+
+</Step>
+
+<Step>
+
+### Wrap your Metro config
+
+The Metro plugin generates the entry that secondary runtimes load.
+
+```js title="metro.config.js"
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const { withThreadedRuntime } = require('@react-native-runtimes/core/metro');
+
+const config = {};
+
+module.exports = withThreadedRuntime(
+  mergeConfig(getDefaultConfig(__dirname), config),
+  {
+    roots: ['App.tsx', 'src'],
+    generatedDir: '.threaded-runtime',
+    generatedEntry: 'entry.js',
+  },
+);
+```
+
+Then add the generated folder to `.gitignore`:
+
+```text title=".gitignore"
+.threaded-runtime/
+```
+
+</Step>
+
+<Step>
+
+### Load the generated entry inside threaded runtimes
+
+Add this to your `index.js` so the threaded entry is only required when the
+file is loaded inside a secondary runtime:
+
+```js title="index.js"
+if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
+  require('./.threaded-runtime/entry');
+}
+```
+
+</Step>
+
+<Step>
+
+### Wire up the native side
+
+<Tabs items={['iOS', 'Android']}>
+<Tab value="iOS">
+
+```swift title="AppDelegate.swift"
+import NativeComposeThreadedRuntime
+
+ThreadedRuntime.configure(
+  withReactNativeDelegate: delegate,
+  launchOptions: launchOptions
+)
+
+// Optional: warm a runtime at startup
+ThreadedRuntime.prewarmRuntime("messages-runtime")
+```
+
+```sh
+cd ios
+bundle exec pod install
+```
+
+</Tab>
+<Tab value="Android">
+
+```kotlin title="MainApplication.kt"
+import com.nativecompose.threadedruntime.ThreadedRuntime
+import com.nativecompose.threadedzustand.ThreadedZustandPackage
+import com.margelo.nitro.NitroModulesPackage
+
+class MainApplication : Application(), ReactApplication {
+  override fun onCreate() {
+    super.onCreate()
+
+    ThreadedRuntime.setExtraReactPackagesProvider {
+      listOf(
+        NitroModulesPackage(),
+        ThreadedZustandPackage(),
+      )
+    }
+
+    loadReactNative(this)
+
+    // Optional: warm a runtime at startup
+    ThreadedRuntime.prewarmRuntime(applicationContext, "messages-runtime")
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+</Step>
+
+<Step>
+
+### Render a component on the second runtime
+
+```tsx title="App.tsx"
+import { OnRuntime } from '@react-native-runtimes/core';
+
+function MessageList({ conversationId }: { conversationId: string }) {
+  // This entire component runs on 'messages-runtime'.
+  return <ActualMessageList conversationId={conversationId} />;
+}
+
+export default function App() {
+  return (
+    <OnRuntime name="messages-runtime">
+      <MessageList conversationId="release-room" />
+    </OnRuntime>
+  );
+}
+```
+
+That's it. Rebuild the app — your `MessageList` now runs on its own JS
+runtime. The main runtime stays free for navigation, gestures, and the rest of
+your UI.
+
+</Step>
+
+</Steps>
+
+## What just happened?
+
+- Metro saw `OnRuntime`'s direct child `MessageList`, gave it a stable id, and registered it in the generated threaded entry.
+- The native `OnRuntime` view asked the runtime named `messages-runtime` to mount the registered component.
+- The runtime loaded the same JS bundle as your main runtime, executed the threaded entry, and rendered `MessageList`.
+
+<Callout type="success" title="Next step">
+  Now read [the installation reference](/docs/getting-started/installation) for
+  prewarming, headless tasks, and the Metro options — or jump straight to
+  [Rendering components on a background runtime](/docs/threaded-runtime/render-components).
+</Callout>
+
+## Troubleshooting
+
+<Callout type="warn" title="Nothing renders on the secondary runtime">
+  Make sure your `index.js` loads `.threaded-runtime/entry` when
+  `global.__THREADED_RUNTIME_ENV__` is set, and that your component is defined
+  at module scope (not inside another component).
+</Callout>
+
+<Callout type="warn" title="Build error mentioning Nitro">
+  Verify `react-native-nitro-modules` is installed and pod-install ran without
+  errors. On Android, confirm `NitroModulesPackage()` is in the
+  `setExtraReactPackagesProvider` list.
+</Callout>

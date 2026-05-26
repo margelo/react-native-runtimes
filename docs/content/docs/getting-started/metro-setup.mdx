@@ -1,0 +1,119 @@
+---
+title: Metro setup
+description: Wrap your Metro config, configure roots and the generated entry, and use runtime-specific bootstrap files.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+The Metro plugin scans your source files for threaded components, scheduled
+runtime functions, and runtime-specific bootstrap files, then writes a small
+**generated entry** that secondary runtimes load.
+
+```js title="metro.config.js"
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const { withThreadedRuntime } = require('@react-native-runtimes/core/metro');
+
+const config = {};
+
+module.exports = withThreadedRuntime(
+  mergeConfig(getDefaultConfig(__dirname), config),
+  {
+    roots: ['App.tsx', 'src'],
+    generatedDir: '.threaded-runtime',
+    generatedEntry: 'entry.js',
+  },
+);
+```
+
+## Options
+
+| Option | Default | What it controls |
+| --- | --- | --- |
+| `roots` | `['App.tsx', 'src']` | Files and folders Metro scans for `OnRuntime`, `threadedComponent`, `runtimeFunction`, and directive functions. |
+| `generatedDir` | `.threaded-runtime` | Where the generated entry and the registration tables are written. Add this folder to `.gitignore`. |
+| `generatedEntry` | `entry.js` | Filename of the generated entry inside `generatedDir`. |
+
+## Loading the generated entry
+
+The generated entry registers component loaders, runtime functions, and the
+`ThreadedRuntimeHost` root. It must be loaded **only inside secondary
+runtimes**, never on the main runtime:
+
+```js title="index.js"
+if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
+  require('./.threaded-runtime/entry');
+}
+```
+
+The two globals exist for backwards compatibility — both indicate the bundle
+is being evaluated in a secondary runtime. New code should rely on
+`__THREADED_RUNTIME_ENV__`.
+
+## .gitignore
+
+Always exclude the generated folder from version control:
+
+```text title=".gitignore"
+.threaded-runtime/
+```
+
+## Per-runtime bootstrap files
+
+For startup code that should only run on a specific runtime, create a
+root-level file with the runtime's name:
+
+```txt
+index.background.ts
+```
+
+The Metro plugin discovers files matching `index.<runtime>.ts(x)` in the
+project root and emits a static conditional require. When native starts a
+runtime named `background`, the generated entry loads `index.background.ts`
+inside that runtime only.
+
+```tsx title="index.background.ts"
+import { registerThreadedHeadlessTask } from '@react-native-runtimes/core';
+import { business } from './src/businessStore';
+
+registerThreadedHeadlessTask<{ reason: string }>(
+  'business:refresh',
+  async ({ payload }) => {
+    await business.hydrate();
+    await business.update(state => ({
+      lastRefreshReason: payload.reason,
+      refreshCount: state.refreshCount + 1,
+    }));
+  },
+);
+
+void business.hydrate();
+```
+
+<Callout title="Keep UI out of bootstrap files" type="warn">
+  Don't import React components or anything that would mount UI inside
+  `index.<runtime>.ts`. Treat it as the runtime's bootstrap: register headless
+  tasks, hydrate stores, start app-lifetime queues.
+</Callout>
+
+The file suffix must match the runtime name used at the native side. If your
+native prewarm uses a different name, use that name as the suffix:
+
+```kotlin
+ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "sync-engine")
+```
+
+```txt
+index.sync-engine.ts
+```
+
+## Troubleshooting
+
+<Callout type="warn" title="Metro picks up the generated entry on the main runtime">
+  Double-check the `if (global.__THREADED_RUNTIME_ENV__ ...)` guard in your
+  `index.js`. The generated entry is large and should never load on main.
+</Callout>
+
+<Callout type="warn" title="A threaded component isn't being registered">
+  Add its file to `roots` or place it under one of the existing roots. Files
+  outside the configured roots are invisible to the plugin.
+</Callout>

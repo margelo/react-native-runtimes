@@ -1,0 +1,93 @@
+---
+title: Runtimes
+description: What a "named runtime" is, how it relates to the main JS runtime, and how to think about lifecycle.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **runtime** is a JavaScript runtime — a JSI/Hermes instance — that has been
+spawned by `@react-native-runtimes/core` and given a string name. It runs the
+same bundle as your main runtime, but in its own thread with its own JS heap.
+
+```ts
+const RUNTIME_NAME = 'messages-runtime';
+```
+
+When you ask for `messages-runtime` to render something, native spawns the
+runtime (if it doesn't already exist), executes the same bundle inside it,
+loads `.threaded-runtime/entry` to register components and functions, and then
+mounts a `ThreadedRuntimeHost` that renders the requested component.
+
+## Naming runtimes
+
+Choose names by **logical owner**, not by screen mount or callsite. Names are
+stable identifiers — every reference to the same name targets the same
+runtime.
+
+| Use case | Good name |
+| --- | --- |
+| Per-conversation chat screen | `conversation-${id}-runtime` |
+| One worker for all background work | `background` |
+| List screen | `feed-runtime` |
+| Fibonacci-style worker | `fibonacci-worker-runtime` |
+
+<Callout type="info" title="Why stable names matter">
+  Stable names mean prewarm, hydrate, and reuse all work. If you generate a
+  new name on every mount, every mount has to wait for cold start.
+</Callout>
+
+## Lifecycle
+
+A runtime moves through three states:
+
+1. **Not started.** No work, no memory cost.
+2. **Started.** The runtime exists and its JS bundle has been loaded. You can dispatch work to it.
+3. **Destroyed.** Released; the JS heap is reclaimed.
+
+You can transition between them explicitly:
+
+```ts
+import { ThreadedRuntime } from '@react-native-runtimes/core';
+
+await ThreadedRuntime.prewarm('messages-runtime'); // not started → started
+await ThreadedRuntime.destroy('messages-runtime'); // started → destroyed
+```
+
+A runtime can be implicitly started by any of these:
+
+- Mounting `<OnRuntime name="...">`
+- Mounting `<ThreadedScreen runtimeName="..." />` (auto-prewarms)
+- Calling `ThreadedRuntime.runHeadlessTask` with that runtime name
+- Calling `call(fn).on('...')(...)`
+- Native dispatch: `ThreadedRuntime.dispatchHeadlessTask`
+
+## Cost
+
+Each runtime has its own JS heap and thread. That cost is **small for one or
+two extra runtimes** and **large if you spin up dozens at once**. Reuse
+runtimes by their logical owner:
+
+- One per chat conversation **only if** conversations are heavy and concurrent.
+- One `background` runtime for all app-lifetime work.
+- One per feed type, not one per screen instance.
+
+<Callout type="warn" title="Don't create a runtime per mount">
+  If you `prewarm` on every render or use a random id, you'll spend the whole
+  app sitting in cold start. Pick names that map to *what owns the work*, not
+  *who's looking at it right now*.
+</Callout>
+
+## Discovery
+
+Inside any threaded runtime, two globals describe where you are:
+
+```ts
+declare const __THREADED_RUNTIME_ENV__: {
+  kind: 'main' | 'threaded' | 'business';
+  runtimeName: string;
+};
+```
+
+This is how the per-runtime bootstrap mechanism works — the generated entry
+checks `runtimeName` and conditionally requires `index.<runtime>.ts`. See
+[Metro setup](/docs/getting-started/metro-setup#per-runtime-bootstrap-files).

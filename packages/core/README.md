@@ -59,7 +59,7 @@ Add the generated directory to `.gitignore`:
 Load the generated entry only in the secondary runtime path:
 
 ```js
-if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
+if (global.__THREADED_RUNTIME_ENV__) {
   require('./.threaded-runtime/entry');
 }
 ```
@@ -537,7 +537,7 @@ creates a surface:
 ```js
 const { AppRegistry } = require('react-native');
 
-if (global._is_it_a_list_env === true) {
+if (global.__THREADED_RUNTIME_ENV__) {
   require('./App'); // component registrations
   AppRegistry.registerComponent(
     'ThreadedRuntimeHost',
