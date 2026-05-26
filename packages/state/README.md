@@ -100,7 +100,17 @@ committed to the process-wide singleton.
 ## Expo
 
 This package supports Expo via an optional config plugin. The plugin runs during
-`expo prebuild` and ensures Android `minSdkVersion` is set to 24 or higher.
+`expo prebuild` and configures:
+
+- **Android — `gradle.properties`** — sets `android.minSdkVersion` ≥ 24.
+- **Android — `MainApplication.kt`** — adds `ThreadedZustandPackage()` to the
+  secondary runtime package list. When `@react-native-runtimes/core` plugin runs
+  first (the typical setup), this extends core's `setExtraReactPackagesProvider`
+  block by adding `ThreadedZustandPackage()` to the existing `listOf`. When used
+  without core, the full block is created.
+- **iOS** — no additional setup needed; the Podspec and NitroModules autolinking
+  handle everything automatically.
+
 The package does **not** require Expo at runtime.
 
 Add the plugin to your `app.config.ts`:

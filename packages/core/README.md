@@ -24,7 +24,21 @@ The package owns the JS registry and host API:
 ## Expo
 
 This package supports Expo via an optional config plugin. The plugin runs during
-`expo prebuild` and ensures Android `minSdkVersion` is set to 24 or higher.
+`expo prebuild` and configures:
+
+- **Android — `gradle.properties`** — sets `android.minSdkVersion` ≥ 24,
+  `newArchEnabled=true`, and `hermesEnabled=true`. New Architecture is required
+  by Nitro Modules; secondary runtimes always use Hermes.
+- **Android — `MainApplication.kt`** — adds
+  `ThreadedRuntime.setExtraReactPackagesProvider { listOf(NitroModulesPackage()) }`
+  inside `onCreate` before `loadReactNative(this)`. Secondary runtimes do not
+  inherit the host package list, so Nitro must be registered explicitly here.
+- **iOS — AppDelegate** — adds `import NativeComposeThreadedRuntime` and calls
+  `ThreadedRuntime.configure(withReactNativeDelegate:launchOptions:)` at the
+  start of `application(_:didFinishLaunchingWithOptions:)`. This call is
+  required: the native code calls `RCTFatal` without it. Supports both Swift and
+  Objective-C AppDelegates. All patches are idempotent.
+
 The package does **not** require Expo at runtime.
 
 Add the plugin to your `app.config.ts`:

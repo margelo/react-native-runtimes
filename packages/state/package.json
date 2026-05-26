@@ -33,7 +33,7 @@
     "typescript": "^5.8.3"
   },
   "peerDependencies": {
-    "@expo/config-plugins": ">=8.0.0",
+    "@expo/config-plugins": ">=9.0.0",
     "react": "*",
     "react-native": "*",
     "react-native-nitro-modules": "*"
