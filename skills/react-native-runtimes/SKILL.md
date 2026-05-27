@@ -1,13 +1,13 @@
 ---
 name: react-native-runtimes
-description: Install, configure, and write code with the @react-native-runtimes/core and @react-native-runtimes/state packages — named secondary React Native (Hermes) runtimes for rendering components, scheduling awaitable functions, and running headless background work, plus the C++-backed shared Zustand store. Use whenever the user mentions threaded runtimes, secondary runtimes, OnRuntime, ThreadedScreen, threadedComponent, runtimeFunction, the `'background'`/`'main'` function directives, ThreadedRuntime.prewarm/runHeadlessTask, the `.threaded-runtime/entry.js` Metro generated file, createSharedStore / store.path, or wants to move long lists, chat screens, or sync engines off the main JS thread. Also use when migrating away from react-native-worklets-core, react-native-multithreading, JSI worklets, or from the older manual `registerThreadedComponent` / top-level path APIs in this package.
+description: Install, configure, and write code with the @react-native-runtimes/core and @react-native-runtimes/state packages — named secondary React Native (Hermes) runtimes for rendering components, scheduling awaitable functions, and running headless background work, plus the C++-backed shared Zustand store. Use whenever the user mentions threaded runtimes, secondary runtimes, OnRuntime, ThreadedScreen, threadedComponent, runtimeFunction, the `'background'`/`'main'` function directives, ThreadedRuntime.prewarm/runHeadlessTask, the `.threaded-runtime/entry.js` Metro generated file, createSharedStore / store.path, or wants to move long lists, chat screens, or sync engines off the main JS thread. Also use when migrating from react-native-worklets-core, react-native-multithreading, or raw JSI worklets.
 metadata:
   type: skill
 ---
 
 # react-native-runtimes
 
-Two packages owned by the Native Compose project:
+Two packages:
 
 - `@react-native-runtimes/core` — named secondary React Native runtimes (extra `ReactHost` on Android, `RCTHost` on iOS, each with its own Hermes runtime and JS heap) for rendering components, scheduling awaitable functions, and running headless background work.
 - `@react-native-runtimes/state` — a Zustand-shaped store whose JSON state lives in a process-wide C++ singleton, so every runtime can read and commit the same data.
@@ -21,7 +21,7 @@ This file is a router. Read it first, then load only the reference that matches 
 - **Awaitable cross-runtime calls — `runtimeFunction`, `call(fn).on(runtimeName)(...)`, `'background'`/`'main'` function directives, `usingRuntime`** → [references/runtime-functions.md](references/runtime-functions.md). Load this when the user wants a return value from work running on another runtime.
 - **Background jobs and runtime lifecycle — `registerThreadedHeadlessTask`, `ThreadedRuntime.runHeadlessTask`, `prewarm` / `destroy` / `getRuntimeNames`, native dispatch from Kotlin / Swift / C++, `index.<runtime>.ts` startup files** → [references/headless-and-lifecycle.md](references/headless-and-lifecycle.md).
 - **Sharing state across runtimes — `createSharedStore`, `store.path([...])`, sync vs async API, `subtrees`, persistence, multi-writer rules** → [references/shared-state.md](references/shared-state.md).
-- **Migrating — from older versions of this package (manual `registerThreadedComponent`, legacy top-level path API), or from `react-native-worklets-core`, `react-native-multithreading`, raw JSI worklets** → [references/migration.md](references/migration.md). Load this FIRST when the user shows worklets-core code or older `register*` patterns.
+- **Migrating from `react-native-worklets-core`, `react-native-multithreading`, or raw JSI worklets** → [references/migration.md](references/migration.md). Load this FIRST when the user shows worklets-core or multithreading code.
 - **Debugging a symptom (a runtime function returns stale data, a threaded surface is blank, a native module is missing on the threaded runtime, props lose fields)** → [references/gotchas.md](references/gotchas.md).
 
 When unsure, start with [references/quickstart.md](references/quickstart.md) — it grounds the rest of the API in a working setup.

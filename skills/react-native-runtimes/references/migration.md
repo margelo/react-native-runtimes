@@ -1,27 +1,10 @@
 # Migration
 
-Two paths land here:
-1. **Older patterns within `@react-native-runtimes`** — manual `registerThreadedComponent`, top-level `setSubtreeState` API, hand-written threaded entry.
-2. **External libraries** — `react-native-worklets-core`, `react-native-multithreading`, raw JSI worklets.
+This reference covers migrating to `@react-native-runtimes/core` from libraries that solve adjacent problems: `react-native-worklets-core`, `react-native-multithreading`, raw JSI worklets.
 
-Load this reference FIRST when the user shows worklets-core code, older `register*` patterns, or asks "how do I move from X to this".
+Load this reference FIRST when the user shows worklets-core code, multithreading code, or asks "how do I move from X to this".
 
 Before writing any migrated code, make sure setup is in place: Metro wrapper, `index.js` gate, native config. See [quickstart.md](quickstart.md). The migrated code below assumes those are done.
-
-## Migrating from older patterns of this package
-
-| Old | New |
-| --- | --- |
-| `registerThreadedComponent('Name', Component)` written by hand in user code | `threadedComponent('Name', Component)` *or* `<OnRuntime name="...">{<Component />}</OnRuntime>` and let Metro generate the registration |
-| Hand-written threaded entry that eagerly imports every component | Configure `withThreadedRuntime` in `metro.config.js`; load `./.threaded-runtime/entry` from the threaded branch of `index.js` |
-| `store.setSubtreeState('key', value, true)` / `store.getSubtreeState('key')` | `store.path('key').set(value, true)` / `store.path('key').get()` |
-| `usingRuntime('rt').run(() => fn(args))` callback form | `await call(fn).on('rt')(args)` — both still work; the new form is what Metro understands directly |
-| `ThreadedRuntime.preload(name)` | `ThreadedRuntime.prewarm(name)` — `preload` is kept as an alias |
-| Awaiting `path.get()` | `path.get()` is synchronous — return value directly, no `await` |
-| Inline closure passed across runtimes | Export a `runtimeFunction(...)` from a module file; pass inputs as JSON args, not as captured variables |
-| `index.js` imports everything unconditionally | Gate threaded-only branch on `global.__THREADED_RUNTIME_ENV__`; main branch calls `AppRegistry.registerComponent(...)` |
-
-If a runtime *name* changes between releases (e.g. `chat-runtime` → `conversation-${id}-runtime`), the old runtime stays alive — `runtimeName` is identity. Add an explicit `ThreadedRuntime.destroy('chat-runtime')` at app startup for known old names, or `destroyAll()` if the new scheme replaces everything (rare).
 
 ## Migrating from `react-native-worklets-core` / `react-native-multithreading` / JSI worklets
 
