@@ -1,195 +1,233 @@
-# Gotchas — long-form
+# Gotchas — debugging guide
 
-Read this when the user is debugging a specific symptom, or before doing anything where any of these failure modes are plausible.
+Load this when a symptom shows up. Each section starts with what the user observes, then explains why, then shows the fix.
 
-## Closures don't capture across runtimes
+For background on the APIs each gotcha touches:
+- Cross-runtime function calls and module-state isolation → [runtime-functions.md](runtime-functions.md)
+- Mounting components, `OnRuntime` rules, surface keys → [rendering-components.md](rendering-components.md)
+- Shared store sync/async split, subscriber cascade, `update` vs `set` → [shared-state.md](shared-state.md)
+- Prewarm, destroy, runtime lifecycle, `runHeadlessTask` semantics → [headless-and-lifecycle.md](headless-and-lifecycle.md)
+- The `index.js` gate, Metro wrapper, and Android package providers that prevent most setup gotchas → [quickstart.md](quickstart.md)
 
-A `runtimeFunction` body looks like a regular JS function, but it executes inside a **different runtime with its own copy of every module**. A variable referenced by closure resolves against the target runtime's module evaluation, not the caller's.
+## A `runtimeFunction` returns stale or wrong data
 
-```tsx
-// src/state.ts
+**Symptom:** the function body reads a module-scope variable, you mutate that variable from the main runtime, and the function keeps returning the old value.
+
+**Why:** the function runs in the *target* runtime, which has its own module evaluation. There are two independent copies of every module-scope variable — one per runtime. Mutating the caller's copy doesn't reach the target's copy.
+
+```ts
+// Bug:
 let userId = 'alice';
-export const greet = runtimeFunction(() => `hi ${userId}`);
+export const fetchUser = runtimeFunction(async () => {
+  return fetch(`/users/${userId}`);   // reads target runtime's copy, still 'alice'
+});
 
-// Main runtime:
-userId = 'bob';                              // changes only the main runtime's copy
-await call(greet).on('worker')();            // returns 'hi alice' on the worker
+userId = 'bob';
+await call(fetchUser).on('background')();   // returns alice's data
 ```
 
-Fix: pass everything you need as arguments. If multiple runtimes need to agree on mutable state, put it in `@react-native-runtimes/state`.
+**Fix:** pass the value as an argument, or read it from a shared store.
 
-## Everything across the boundary is JSON
+```ts
+// Option 1: argument
+export const fetchUser = runtimeFunction(async (userId: string) => {
+  return fetch(`/users/${userId}`);
+});
+await call(fetchUser).on('background')('bob');
 
-`OnRuntime` props, `runtimeFunction` arguments and return values, headless task payloads, and shared store values are all `JSON.stringify`'d at the native boundary. That means:
-
-- Functions, class instances, refs, native handles, error objects: lost. `Error` becomes `{}`.
-- `Date`: becomes a string only if you call `.toISOString()`. A raw `Date` becomes `{}`.
-- `Map` / `Set`: become `{}` / `{}`.
-- `undefined` values: stripped from objects, become `null` in arrays.
-- `BigInt`: throws.
-- Circular references: throw.
-- Very large objects: cost real CPU on both sides. Pass an id and re-read the data on the other side.
-
-Diagnosing: when a remote function returns something that looks like the right shape but is missing fields, JSON serialization is the suspect.
-
-## `runHeadlessTask` resolves on dispatch, not on completion
-
-```tsx
-await ThreadedRuntime.runHeadlessTask('hydrate', { runtimeName, payload });
-// At this point: native has accepted the dispatch.
-// The handler body may not have started yet, and certainly may not be done.
+// Option 2: shared store
+const userIdPath = sessionStore.path<string>('userId');
+export const fetchUser = runtimeFunction(async () => {
+  return fetch(`/users/${userIdPath.get()}`);   // SYNC get
+});
+await userIdPath.set('bob');
 ```
 
-If the caller needs to know the task is finished, use `runtimeFunction` instead — its Promise resolves with the function's return value when the body completes.
+The same bug happens with a function directive (`async function fetchUser() { 'background'; ... }`) — the directive is sugar over the same `runtimeFunction` registration, and module state still isn't shared.
 
-Native dispatch (Kotlin/Swift/C++) returns even sooner — the dispatch can land before the runtime exists, in which case native queues it and flushes after startup.
+## A threaded surface is blank / shows the main app
 
-## `OnRuntime` child must be a direct, top-level component reference
+**Symptom:** `<ThreadedScreen>` renders nothing, or you see your main app component inside the threaded surface.
 
-Metro can only rewrite static, statically-identifiable children. These don't work:
+**Why:** `index.js` is loaded by *every* runtime — main and threaded. Without the `global.__THREADED_RUNTIME_ENV__` gate, the threaded runtime calls `AppRegistry.registerComponent(appName, () => App)` and the threaded surface mounts the wrong component.
 
-```tsx
-<OnRuntime name="x">{condition ? <A /> : <B />}</OnRuntime>          // ternary
-<OnRuntime name="x">{children}</OnRuntime>                            // prop forwarding
-<OnRuntime name="x"><Suspense fallback={...}><A /></Suspense></OnRuntime>  // wrapper
-```
-
-Fix: move the condition outside (`condition ? <OnRuntime name="x"><A /></OnRuntime> : <OnRuntime name="x"><B /></OnRuntime>`), or use `threadedComponent` + `Threaded` explicitly and let JSX wrap as it pleases on the threaded side.
-
-The threaded child component must also be defined at module top level — not inside another function — so Metro can attach the registration to the export.
-
-## The function directive only works at module/global scope
-
-```tsx
-// Works:
-async function refreshCache(key: string) {
-  'background';
-  // ...
-}
-
-// Does not work — directive is just a no-op string statement in a regular function:
-function makeRefresher() {
-  return async function refreshCache(key: string) {
-    'background';
-    // runs on the current runtime, not 'background'
-  };
-}
-```
-
-Directive functions are also rewritten to `const X = call(X_).on(...)` aliases at the same source position. Declarations have to appear before their first call site (no value hoisting):
-
-```tsx
-await refreshCache('settings');   // ReferenceError before the directive function declaration runs
-async function refreshCache(key: string) { 'background'; /* ... */ }
-```
-
-## `index.js` is loaded by every runtime
-
-Without a gate, the threaded runtime will try to register your main app component and / or evaluate code that assumes the main runtime's modules. Gate with `global.__THREADED_RUNTIME_ENV__`:
+**Fix:** gate the threaded branch.
 
 ```js
+// index.js
 if (global.__THREADED_RUNTIME_ENV__) {
-  require('./.threaded-runtime/entry');
+  require('./.threaded-runtime/entry');     // registers ThreadedRuntimeHost
 } else {
   AppRegistry.registerComponent(appName, () => App);
 }
 ```
 
-Symptoms when this is wrong: blank screen on threaded surfaces (because the main app component is mounted as `ThreadedRuntimeHost`); duplicate-registration warnings; native modules that work on the main runtime returning undefined on the threaded one.
+Adjacent variant: the file does exist and the gate is right, but `roots` in `withThreadedRuntime` doesn't cover the file the component lives in. Check `metro.config.js`.
 
-## Threaded runtimes need their native packages explicitly (Android)
+## A native module call from the threaded runtime returns undefined / throws "module not found"
 
-Autolinking installs every linked module into the main runtime. Threaded runtimes only get what `ThreadedRuntime.setExtraReactPackagesProvider { ... }` returns.
+**Symptom:** the main runtime can call a TurboModule / native module fine; the threaded runtime sees it as `undefined`.
+
+**Why:** autolinking installs native modules into the **main** runtime only. Threaded runtimes see only what the package provider returns.
+
+**Fix (Android):**
 
 ```kotlin
+ThreadedRuntime.setMainReactPackagesProvider {
+  PackageList(this).packages         // give threaded runtimes the same module set as main
+}
+// or curate:
 ThreadedRuntime.setExtraReactPackagesProvider {
-  listOf(
-    NitroModulesPackage(),
-    ThreadedZustandPackage(),
-    // any module the threaded runtime calls
-  )
+  listOf(NitroModulesPackage(), ThreadedZustandPackage(), /* screen-specific packages */)
 }
 ```
 
-For business runtimes that should mirror the main runtime's module set, use `setMainReactPackagesProvider { PackageList(this).packages }` + `prewarmBusinessRuntime`.
+**Fix (iOS):** less common — iOS reuses the RN delegate, so module lookup works through the same path. Make sure `ThreadedRuntime.configure(withReactNativeDelegate:launchOptions:)` ran in `AppDelegate` before the first surface.
 
-Symptom: a native module call from the threaded runtime returns undefined, throws "module not found," or rejects with a TurboModule lookup error. The main runtime is fine.
+## Props lose fields / `instanceof` doesn't work
 
-On iOS, the configured RN delegate is reused for threaded runtimes, so module lookup goes through the same path — no separate registration needed, but `ThreadedRuntime.configure(withReactNativeDelegate:launchOptions:)` must run before any surface.
+**Symptom:** a value is in the props object on the calling side but missing on the threaded side. Or `props.error instanceof Error` is always false. Or a `Date` field shows up as `"2026-05-27T..."` — or worse, as `{}`.
 
-## Shared state `set(snapshot)` clobbers concurrent writes
+**Why:** everything across the runtime boundary is `JSON.stringify`'d.
 
-```tsx
-const messages = chatStore.path<Message[]>(['conversations', id]);
-const current = messages.get();
-await messages.set([...current, newMessage]);   // race: another runtime might have written between get() and set()
+- Functions, refs, class instances → lost
+- `Error` → becomes `{}`
+- `Date` → `{}` unless you `.toISOString()` first (then it's a string)
+- `Map` / `Set` → `{}`
+- `undefined` values → stripped from objects, become `null` in arrays
+- `BigInt` → throws
+- Circular refs → throws
+
+**Fix:** pass plain JSON. For identity, pass ids. For dates, ISO strings. For things you can't serialize, look them up on the other side through a shared store, native module, or registry.
+
+## `runHeadlessTask` resolves but my handler hasn't run
+
+**Symptom:** `await ThreadedRuntime.runHeadlessTask(...)` resolves, then immediately afterwards a `path.get()` returns the old value.
+
+**Why:** the Promise resolves when native **accepts the dispatch**, not when the handler body finishes. If the runtime is still starting, the dispatch is just queued.
+
+**Fix:** use `runtimeFunction` for request/response — its Promise waits for the function body.
+
+```ts
+const messages = await call(hydrateConversation).on('worker')({ conversationId, limit: 50 });
 ```
 
-Fix: use `update`, which atomically reads the current value and applies the function on the native side.
+If a headless dispatch is really what you want (fire-and-forget), put the durable output into shared state or native storage, and let the caller subscribe.
+
+## `<OnRuntime>` doesn't render anything / Metro build fails on duplicate name
+
+**Symptom:** an `OnRuntime` with what looks like a fine child isn't producing a registered component, or Metro errors with "duplicate threaded component name."
+
+**Why (no render):** Metro can only rewrite static, statically-identifiable children. Ternaries, prop-forwarded `children`, and wrappers (`<Suspense>`, etc.) break the analysis.
 
 ```tsx
+// Doesn't work:
+<OnRuntime name="x">{condition ? <A /> : <B />}</OnRuntime>
+<OnRuntime name="x">{children}</OnRuntime>
+```
+
+**Fix:** move the condition outside, or use `threadedComponent` + `<Threaded>` explicitly.
+
+```tsx
+condition ? <OnRuntime name="x"><A /></OnRuntime> : <OnRuntime name="x"><B /></OnRuntime>
+```
+
+**Why (duplicate name):** two different `threadedComponent(...)` calls used the same string name, or the same component is reachable through two file paths and got two file-based ids. Names must be globally unique. The fix is to make the explicit names distinct, or convert duplicate code paths to share a single canonical component file.
+
+## The function directive doesn't seem to dispatch anywhere
+
+**Symptom:** `async function refresh() { 'background'; ... }` runs but stays on the main runtime.
+
+**Why:** one of:
+
+1. The function is nested inside another function — directives only work at module/global scope.
+2. The file isn't under `roots` in `metro.config.js`.
+3. Metro didn't re-run since the edit — restart with `--reset-cache`.
+4. The call site is *above* the function declaration. Directive functions are rewritten to `const` aliases, so they're temporal-dead-zone'd until the declaration runs.
+
+**Fix:** move the function to top level, ensure the file is in `roots`, restart Metro, define before first call.
+
+## I `await path.get()` and it returns the value but other things break later
+
+**Symptom:** code compiles, runs, returns the right value — but then someone wraps the call in `Promise.all([p1, get(), p2])` or adds `.then(...)` and it acts weird.
+
+**Why:** `path.get()` is **synchronous**. Awaiting a non-Promise unwraps the value (a no-op), but the call site looks async, so future readers chain Promise methods on a plain value.
+
+**Fix:** don't `await` sync methods. The sync methods are `path.get()`, `path.use()`, `path.getRevision()`. The async methods are `path.set()`, `path.update()`, `path.hydrate()`, `path.clear()`.
+
+## A subscriber re-renders on every conversation update, even ones I don't care about
+
+**Symptom:** a component subscribed to `chatStore.path('conversations').use()` re-renders whenever any conversation updates.
+
+**Why:** path subscribers cascade in both directions. A change to `conversations.release-room` notifies subscribers on `conversations` (ancestor) and on `conversations.release-room` (direct hit).
+
+**Fix:** subscribe to the narrowest path you actually need, or pass a selector to `use()` and let the path tree skip re-renders when the derived value hasn't changed.
+
+```ts
+// Re-renders only when the count changes:
+const count = chatStore.path('conversations').use(v => Object.keys(v ?? {}).length);
+```
+
+## Two runtimes write the same path and one of them wins inconsistently
+
+**Symptom:** writes from runtime A or B appear to be lost — the order isn't deterministic.
+
+**Why:** `set(snapshot)` races. A reader takes a snapshot, builds the new value, calls `set` — but another runtime committed in between. The stale-based snapshot overwrites the concurrent write.
+
+**Fix:** use `update(prev => next)`. Native applies the function atomically against the current value.
+
+```ts
 await messages.update(prev => [...(prev ?? []), newMessage]);
 ```
 
-Rule of thumb: if only one runtime writes a given path, `set` is fine. If multiple runtimes can write it, always `update`.
+## Renaming a runtime didn't free the old one
 
-## Path subscribers cascade
+**Symptom:** `getRuntimeNames()` still lists the old runtime name after a release with new naming.
 
-A change to `conversations.release-room` notifies:
-- subscribers on `conversations.release-room` (direct hit)
-- subscribers on `conversations` (ancestor)
-- subscribers on `conversations.release-room.*` (descendants, if any)
+**Why:** `runtimeName` is identity. Changing the name creates a new runtime; the old one stays until you destroy it.
 
-This is usually what you want — `chatStore.path('conversations').use()` will pick up every conversation update. But it also means a global subscription on a hot ancestor path re-renders every component using it on every leaf write. Prefer narrow paths or a selector form `path.use(value => derived)`.
+**Fix:** at startup, destroy known old names explicitly.
 
-## No transactions across paths
-
-Two writes are two events. A subscriber may observe one write but not the other yet.
-
-```tsx
-await metadata.set({ updatedAt: now });   // commit A
-await messages.set(newMessages);          // commit B
+```ts
+for (const old of ['old-runtime-name']) {
+  await ThreadedRuntime.destroy(old);
+}
 ```
 
-A reader on both paths can render between A and B with an inconsistent view. Fix: write the related fields together as a single composite value at one path, or design the consumer to tolerate temporary mismatch.
+## Cold start is slower than I expected
 
-## Renaming a runtime is creating a new one
+**Symptom:** the first time the user opens a chat thread, it takes several hundred ms before the threaded screen appears.
 
-`runtimeName` is identity. If you change `conversation-${conversationId}-runtime` to a different scheme on a new release, the old runtimes are still there. Either:
+**Why:** each named runtime is a full RN runtime. Cold start includes Hermes context creation, JS bundle parse, module evaluations, and native module instantiations.
 
-- Migrate explicitly: call `ThreadedRuntime.destroy('old-name')` for known old names at startup.
-- Use `ThreadedRuntime.destroyAll()` if the new scheme replaces everything (rare; will tear down anything else in flight).
+**Fix:** prewarm earlier — while a picker or list is on screen.
 
-## Each runtime is a full RN runtime, not a thin worker
+```ts
+useEffect(() => {
+  for (const id of likelyNextConversationIds) {
+    void ThreadedRuntime.prewarm(`conversation-${id}-runtime`);
+  }
+}, [likelyNextConversationIds]);
+```
 
-Cost per runtime is non-trivial:
-- Hermes context + JS bundle parse: hundreds of ms on cold start.
-- Memory: the bundle is resident; every module the runtime touches is evaluated.
-- Native modules: the modules in `setExtraReactPackagesProvider` are instantiated per runtime.
+Repeat on `onPressIn` — cheap if the runtime already exists. `ThreadedScreen` does its own preload via a React effect, but the effect runs after the navigation animation starts, so explicit prewarm typically saves the bundle-load hop.
 
-Design implications:
-- Don't spin one up per task. Pool them by logical owner (`background`, `business-runtime`, `conversation-${id}-runtime`).
-- Prewarm runtimes that the user will likely navigate to, while they are still on the previous screen.
-- Destroy runtimes whose owner is gone (a closed conversation, a logged-out user) — they will not be reclaimed on their own.
+## Multiple JS contexts in DevTools / no cross-runtime stack traces
 
-## Hermes only
+**Symptom:** Hermes Inspector / Chrome DevTools show multiple JS targets; a throw on the worker doesn't include a caller-side stack frame.
 
-JSC is not a supported engine for threaded runtimes. Verify `hermesEnabled=true` in `android/gradle.properties` and that the iOS Podfile uses Hermes (`:hermes_enabled => true`).
+**Why:** each named runtime is a separate Hermes runtime / JS context. They're isolated by design. Stack traces don't cross runtimes.
 
-## Debugging: each runtime is a separate JS context
+**Fix:** this is expected. To debug, attach to both targets and log on both sides of a runtime call.
 
-In Hermes Inspector / Chrome DevTools, each named runtime shows up as a separate target. Console output is per-runtime — a `console.log` from `'background'` doesn't appear in the main runtime's Metro logs unless you tail both.
+## The runtime exists but my function isn't being found there
 
-Stack traces don't cross runtimes. A `runtimeFunction` call that throws on the worker rejects on the caller with the error message but no caller-side stack. Log on both sides if you need a full picture.
+**Symptom:** `call(fn).on('worker')()` rejects with "runtime function not found" or just hangs.
 
-## When something doesn't trigger and you expect it to
+**Why:** one of:
 
-If a `runtimeFunction` call or function directive doesn't seem to be dispatching anywhere:
-
-1. Confirm the source file is under one of the `roots` in `withThreadedRuntime`.
-2. Confirm the function is **exported** (the directive form generates an export with a `_` suffix; check `.threaded-runtime/entry.js` for the registration).
-3. Confirm `.threaded-runtime/entry.js` was regenerated after your last edit. Metro should re-run the wrapper on save; if not, restart with `--reset-cache`.
-4. Confirm `index.js` actually requires `.threaded-runtime/entry` when `__THREADED_RUNTIME_ENV__` is set.
-5. Confirm the target runtime exists — `ThreadedRuntime.getRuntimeNames()` should include it; if not, prewarm it first.
-
-If the dispatch succeeds but nothing happens on the target side, the registered loader probably failed silently — wrap the registration's require call in a `try` and log in the threaded entry to find out.
+1. The exporting file isn't under `roots` — its `registerRuntimeFunction` never ended up in `.threaded-runtime/entry.js`.
+2. The function isn't actually exported.
+3. The Metro-generated entry is stale. Restart with `--reset-cache`.
+4. The registered loader threw silently when the threaded runtime tried to require the file. Wrap a `try` in the registration during diagnosis to find out.
+5. The target runtime doesn't exist — `getRuntimeNames()` should include it. Prewarm if not.
