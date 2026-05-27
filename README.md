@@ -4,7 +4,7 @@
 
 # react-native-runtimes
 
-**True multi-runtime React Native — offload UI and logic to isolated Hermes instances**
+**Run heavy React Native UI and business logic in isolated Hermes runtimes — without freezing your main JS thread**
 
 [![React Native](https://img.shields.io/badge/React%20Native-0.76%2B-61DAFB?style=flat-square&logo=react)](https://reactnative.dev)
 [![New Architecture](https://img.shields.io/badge/New%20Architecture-required-brightgreen?style=flat-square)](https://reactnative.dev/docs/the-new-architecture/landing-page)
@@ -13,7 +13,7 @@
 [![iOS](https://img.shields.io/badge/iOS-supported-000000?style=flat-square&logo=apple)](https://developer.apple.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-[📖 Docs](https://szymon20000.github.io/react-native-runtimes/) · [📦 Core Package](packages/core/README.md) · [🗂 State Package](packages/state/README.md)
+[📖 Docs](https://szymon20000.github.io/react-native-runtimes/) · [⚡ Quick Start](#getting-started) · [📦 Core](packages/core/README.md) · [🗂 State](packages/state/README.md)
 
 </div>
 
@@ -21,9 +21,15 @@
 
 ## What is this?
 
-React Native runs your entire JavaScript product on a single Hermes VM. One slow component, one heavy reducer, one large list — and your whole UI stutters.
+React Native gives your product one main JavaScript runtime. When a feed, chat screen, editor, reducer, or hydration job monopolizes that runtime, input, animation, and navigation all start competing for the same VM.
 
-**react-native-runtimes** gives you a first-class API to spin up named secondary Hermes runtimes, mount React components inside them, share state across the JS heap boundary, and dispatch work to any runtime from anywhere — all with zero glue code.
+**react-native-runtimes** adds a multi-runtime layer for React Native New Architecture apps:
+
+- mount selected React components in named secondary Hermes runtimes
+- run whole screens, headless tasks, and typed functions away from the main runtime
+- share state across isolated JS heaps through a native C++ singleton
+- prewarm runtimes before navigation so expensive surfaces are ready when users arrive
+- wire it through Metro and, for Expo, a config plugin instead of hand-written runtime plumbing
 
 ```tsx
 // That's it. This component now renders in its own Hermes instance.
@@ -34,15 +40,30 @@ React Native runs your entire JavaScript product on a single Hermes VM. One slow
 
 ---
 
-## Why secondary runtimes?
+## What it unlocks
 
-| Problem | With react-native-runtimes |
+| If your app has... | You can move... | Main runtime keeps... |
 |---|---|
-| Heavy list blocks UI thread | Render inside an isolated runtime — main JS stays free |
-| Business logic competes with animation | Move reducers / stores to a dedicated runtime |
-| Chat screen janks on navigation | Prewarm the runtime *before* the user taps |
-| Background hydration blocks render | Dispatch headless tasks to a worker runtime |
-| State sync across runtimes is painful | Native C++ singleton — reads are synchronous, no bridge round-trip |
+| A chat, feed, or inbox that janks on mount | The expensive list or route surface | Navigation, gestures, and input |
+| Reducers or stores competing with animation | Business logic in a long-lived runtime | Frame-critical UI work |
+| Slow first-open screens | A prewarmed runtime before the user taps | Predictable navigation latency |
+| Background hydration or decoding | Headless tasks on a worker runtime | Responsive startup and render |
+| State that must be visible everywhere | Native-backed shared stores | Synchronous reads without bridge round-trips |
+
+---
+
+## When to reach for it
+
+- You have one or two expensive features that repeatedly monopolize the main JS runtime.
+- You want a chat, feed, editor, map sidebar, or media-heavy route to stay alive and warm.
+- You need business logic or cache hydration to run without blocking interaction.
+- You are already on React Native New Architecture with Hermes, or you are willing to move there.
+
+## When not to use it
+
+- Your app is simple enough that memoization, virtualization, or moving work off render fixes the issue.
+- You need legacy architecture or a non-Hermes JS engine.
+- You want to pass large mutable objects or non-serializable props directly between runtimes. Pass ids/keys and read shared data from native-backed state instead.
 
 ---
 
@@ -55,7 +76,7 @@ React Native runs your entire JavaScript product on a single Hermes VM. One slow
 
 ---
 
-## Feature Highlights
+## Core capabilities
 
 ### 🧵 Zero-boilerplate threaded components
 
@@ -211,41 +232,9 @@ export default {
 
 ---
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────┐
-│                  React Native App                │
-│                                                  │
-│  ┌─────────────────┐   ┌────────────────────┐   │
-│  │  Main JS Runtime│   │ Secondary Runtimes │   │
-│  │  (Hermes)       │   │                    │   │
-│  │                 │   │  ┌──────────────┐  │   │
-│  │  <App />        │   │  │ chat-runtime │  │   │
-│  │  <Navigator />  │◄──┤  │ <MessageList>│  │   │
-│  │                 │   │  └──────────────┘  │   │
-│  │                 │   │  ┌──────────────┐  │   │
-│  │                 │   │  │ feed-runtime │  │   │
-│  │                 │   │  │ <FeedList /> │  │   │
-│  │                 │   │  └──────────────┘  │   │
-│  └────────┬────────┘   └────────┬───────────┘   │
-│           │                     │               │
-│  ┌────────▼─────────────────────▼───────────┐   │
-│  │       Native C++ State Singleton         │   │
-│  │   (SharedZustandStore — synchronous)     │   │
-│  └──────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────┘
-```
-
----
-
 ## Getting Started
 
 ### 1. Install
-
-
-
-
 
 ```sh
 npm install @react-native-runtimes/core @react-native-runtimes/state react-native-nitro-modules
@@ -293,30 +282,15 @@ export default function App() {
 
 ---
 
-## Running the Example App
-
-```sh
-npm install
-npm run android
-# or
-npm run ios
-```
-
-Release smoke-test build:
-
-```sh
-cd android
-./gradlew :app:assembleRelease
-adb install -r app/build/outputs/apk/release/app-release.apk
-```
-
----
-
 ## Requirements
 
-- React Native **0.76+** (New Architecture required)
-- Hermes JS engine
-- Android or iOS
+| Requirement | Support |
+|---|---|
+| React Native | **0.76+** |
+| Architecture | New Architecture required |
+| JavaScript engine | Hermes |
+| Platforms | Android and iOS |
+| Expo | Config plugin included in `@react-native-runtimes/core` |
 
 ---
 
@@ -325,11 +299,11 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 - 📖 [Hosted docs](https://szymon20000.github.io/react-native-runtimes/)
 - 📦 [Core package — full API reference](packages/core/README.md)
 - 🗂 [State package — shared store API](packages/state/README.md)
+- 🧪 [Example app](example)
 - 🏗 [Docusaurus source](website/docs/intro.md)
+- 🤝 [Contributing guide](CONTRIBUTING.md)
 
 ---
-
-
 
 ## Authors
 
@@ -337,28 +311,28 @@ adb install -r app/build/outputs/apk/release/app-release.apk
   <tr>
     <td align="center">
       <a href="https://github.com/Szymon20000">
-        <img src="https://github.com/Szymon20000.png" width="64" /><br/>
+        <img src="https://github.com/Szymon20000.png" width="32" /><br/>
         <sub><b>Szymon Kapała</b></sub>
       </a><br/>
       <a href="https://x.com/Turbo_Szymon">@Turbo_Szymon</a>
     </td>
     <td align="center">
       <a href="https://github.com/v3ron">
-        <img src="https://github.com/v3ron.png" width="64" /><br/>
+        <img src="https://github.com/v3ron.png" width="32" /><br/>
         <sub><b>Szymon Chmal</b></sub>
       </a><br/>
       <a href="https://x.com/ChmalSzymon">@ChmalSzymon</a>
     </td>
     <td align="center">
       <a href="https://github.com/pioner92">
-        <img src="https://github.com/pioner92.png" width="64" /><br/>
+        <img src="https://github.com/pioner92.png" width="32" /><br/>
         <sub><b>Alex Shumihin</b></sub>
       </a><br/>
       <a href="https://x.com/pioner_dev">@pioner_dev</a>
     </td>
     <td align="center">
       <a href="https://github.com/riteshshukla04">
-        <img src="https://github.com/riteshshukla04.png" width="64" /><br/>
+        <img src="https://github.com/riteshshukla04.png" width="32" /><br/>
         <sub><b>Ritesh Shukla</b></sub>
       </a><br/>
       <a href="https://x.com/RiteshRk14">@RiteshRk14</a>
