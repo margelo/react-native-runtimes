@@ -2,6 +2,50 @@
   "name": "@react-native-runtimes/state",
   "version": "0.0.1",
   "private": true,
+  "description": "Cross-runtime shared state for React Native multi-runtime apps. Zustand-style API backed by a process-wide C++ singleton — reads and writes from every Hermes runtime without a JS heap boundary.",
+  "keywords": [
+    "react-native",
+    "react-native-new-architecture",
+    "hermes",
+    "multi-runtime",
+    "shared-state",
+    "cross-runtime-state",
+    "zustand",
+    "state-management",
+    "nitro-modules",
+    "fabric",
+    "ios",
+    "android"
+  ],
+  "license": "MIT",
+  "author": "Native Compose",
+  "contributors": [
+    {
+      "name": "Szymon Kapała",
+      "url": "https://github.com/Szymon20000"
+    },
+    {
+      "name": "Szymon Chmal",
+      "url": "https://github.com/v3ron"
+    },
+    {
+      "name": "Alex Shumihin",
+      "url": "https://github.com/pioner92"
+    },
+    {
+      "name": "Ritesh Shukla",
+      "url": "https://github.com/riteshshukla04"
+    }
+  ],
+  "homepage": "https://github.com/Szymon20000/react-native-runtimes/tree/main/packages/state#readme",
+  "bugs": {
+    "url": "https://github.com/Szymon20000/react-native-runtimes/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Szymon20000/react-native-runtimes.git",
+    "directory": "packages/state"
+  },
   "main": "src/index.ts",
   "types": "src/index.ts",
   "react-native": "src/index.ts",
@@ -34,5 +78,8 @@
     "react": "*",
     "react-native": "*",
     "react-native-nitro-modules": "*"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

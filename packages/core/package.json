@@ -2,6 +2,53 @@
   "name": "@react-native-runtimes/core",
   "version": "0.0.1",
   "private": true,
+  "description": "Run React Native components and functions in named secondary Hermes runtimes. Threaded surfaces, headless tasks, and cross-runtime function calls for React Native New Architecture.",
+  "keywords": [
+    "react-native",
+    "react-native-new-architecture",
+    "hermes",
+    "multi-runtime",
+    "threaded-runtime",
+    "secondary-runtime",
+    "background-runtime",
+    "headless-task",
+    "runtime-function",
+    "fabric",
+    "nitro-modules",
+    "turbomodules",
+    "concurrent-rendering",
+    "ios",
+    "android"
+  ],
+  "license": "MIT",
+  "author": "Native Compose",
+  "contributors": [
+    {
+      "name": "Szymon Kapała",
+      "url": "https://github.com/Szymon20000"
+    },
+    {
+      "name": "Szymon Chmal",
+      "url": "https://github.com/v3ron"
+    },
+    {
+      "name": "Alex Shumihin",
+      "url": "https://github.com/pioner92"
+    },
+    {
+      "name": "Ritesh Shukla",
+      "url": "https://github.com/riteshshukla04"
+    }
+  ],
+  "homepage": "https://github.com/Szymon20000/react-native-runtimes/tree/main/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/Szymon20000/react-native-runtimes/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Szymon20000/react-native-runtimes.git",
+    "directory": "packages/core"
+  },
   "main": "src/index.ts",
   "types": "src/index.ts",
   "react-native": "src/index.ts",
@@ -54,5 +101,8 @@
     "@expo/config-plugins": {
       "optional": true
     }
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
