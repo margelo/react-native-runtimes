@@ -1,4 +1,4 @@
-import { runtimeFunction } from '@react-native-runtimes/core';
+import { getCurrentRuntime, runtimeFunction } from '@react-native-runtimes/core';
 
 export type FibonacciResult = {
   input: number;
@@ -9,15 +9,10 @@ export type FibonacciResult = {
 };
 
 function runtimeInfo() {
-  const globals = globalThis as {
-    __THREADED_RUNTIME_ENV__?: { kind?: string; runtimeName?: string };
-    __COMPOSE_CHAT_LIST_ENV__?: { kind?: string; runtimeName?: string };
-  };
-  const threadedEnv = globals.__THREADED_RUNTIME_ENV__;
-  const listEnv = globals.__COMPOSE_CHAT_LIST_ENV__;
+  const runtime = getCurrentRuntime();
   return {
-    runtimeKind: threadedEnv?.kind ?? listEnv?.kind ?? 'main',
-    runtimeName: threadedEnv?.runtimeName ?? listEnv?.runtimeName ?? 'main',
+    runtimeKind: runtime.kind ?? 'main',
+    runtimeName: runtime.name,
   };
 }
 

@@ -140,10 +140,6 @@ void installRuntimeFunctionJsi(Runtime &runtime, const std::string &runtimeName)
       runtime,
       "__rnrCallRuntimeFunction",
       std::move(callFunction));
-  runtime.global().setProperty(
-      runtime,
-      "__rnrRuntimeFunctionCacheRuntimeName",
-      String::createFromUtf8(runtime, runtimeName));
 }
 
 } // namespace nativecompose::threadedruntime

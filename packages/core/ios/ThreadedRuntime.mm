@@ -78,23 +78,11 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
 - (void)host:(RCTHost *)host didInitializeRuntime:(facebook::jsi::Runtime &)runtime
 {
   auto global = runtime.global();
-  global.setProperty(runtime, "global", global);
-  global.setProperty(runtime, "globalThis", global);
-  global.setProperty(runtime, "_is_it_a_list_env", true);
 
   auto threadedEnv = facebook::jsi::Object(runtime);
   threadedEnv.setProperty(runtime, "kind", facebook::jsi::String::createFromUtf8(runtime, [_kind UTF8String]));
   threadedEnv.setProperty(runtime, "runtimeName", facebook::jsi::String::createFromUtf8(runtime, [_runtimeName UTF8String]));
-  threadedEnv.setProperty(runtime, "isBackgroundRuntime", ![_kind isEqualToString:ThreadedRuntimeDefaultRuntimeKind]);
-  threadedEnv.setProperty(runtime, "useMainNativeModules", true);
-  threadedEnv.setProperty(runtime, "version", 1);
   global.setProperty(runtime, "__THREADED_RUNTIME_ENV__", threadedEnv);
-
-  auto listEnv = facebook::jsi::Object(runtime);
-  listEnv.setProperty(runtime, "kind", facebook::jsi::String::createFromUtf8(runtime, "background-list"));
-  listEnv.setProperty(runtime, "runtimeName", facebook::jsi::String::createFromUtf8(runtime, [_runtimeName UTF8String]));
-  listEnv.setProperty(runtime, "version", 1);
-  global.setProperty(runtime, "__COMPOSE_CHAT_LIST_ENV__", listEnv);
 
   nativecompose::threadedruntime::installRuntimeFunctionJsi(runtime, [_runtimeName UTF8String]);
 

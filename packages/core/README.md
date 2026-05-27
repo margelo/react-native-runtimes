@@ -59,7 +59,11 @@ Add the generated directory to `.gitignore`:
 Load the generated entry only in the secondary runtime path:
 
 ```js
-if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
+const {
+  isMainRuntime,
+} = require('@react-native-runtimes/core');
+
+if (!isMainRuntime()) {
   require('./.threaded-runtime/entry');
 }
 ```
@@ -91,8 +95,7 @@ index.two-runtimes-business-runtime.ts
 
 Only files matching `index.<runtime>.ts` in the project root are discovered.
 The generated entry requires a file when `<runtime>` matches either
-`global.__THREADED_RUNTIME_ENV__.kind` or
-`global.__THREADED_RUNTIME_ENV__.runtimeName`.
+`getCurrentRuntime().kind` or `getCurrentRuntime().name`.
 
 The component module is required only when `ThreadedRuntimeHost` receives that
 component name.
@@ -536,8 +539,11 @@ creates a surface:
 
 ```js
 const { AppRegistry } = require('react-native');
+const {
+  isMainRuntime,
+} = require('@react-native-runtimes/core');
 
-if (global._is_it_a_list_env === true) {
+if (!isMainRuntime()) {
   require('./App'); // component registrations
   AppRegistry.registerComponent(
     'ThreadedRuntimeHost',
@@ -612,12 +618,41 @@ ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "business-runtime")
 That runtime receives `global.__THREADED_RUNTIME_ENV__` before the bundle runs:
 
 ```tsx
-if (global.__THREADED_RUNTIME_ENV__?.kind === 'business-runtime') {
+import { getCurrentRuntime } from '@react-native-runtimes/core';
+
+if (getCurrentRuntime().kind === 'business-runtime') {
   require('./src/businessRuntimeEntry');
 } else {
   require('./src/mainRuntimeEntry');
 }
 ```
+
+## Runtime Globals
+
+Supported runtime identity is exposed through the public API:
+
+```ts
+import { getCurrentRuntime, isMainRuntime } from '@react-native-runtimes/core';
+
+const runtime = getCurrentRuntime();
+```
+
+- `getCurrentRuntime()` returns `{ isMain, name, kind }`
+- `isMainRuntime()` is the preferred bootstrap check
+
+The only supported runtime global is `global.__THREADED_RUNTIME_ENV__`, which is
+installed before bundle execution on secondary runtimes and currently contains:
+
+- `runtimeName`
+- `kind`
+
+Internal globals used by runtime-function dispatch still exist, but they are not
+part of the app-facing API:
+
+- `global.__rnrRegisterRuntimeFunction`
+- `global.__rnrCallRuntimeFunction`
+
+Apps should not depend on those names directly.
 
 iOS threaded runtimes already use the configured React Native delegate for
 native-module lookup, so `ThreadedRuntime.prewarmBusinessRuntime("business-runtime")`
