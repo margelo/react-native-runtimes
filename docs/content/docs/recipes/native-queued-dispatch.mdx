@@ -1,0 +1,41 @@
+---
+title: Native queued dispatch
+description: Dispatch a headless task from native before JS has a convenient caller — native queues it until the runtime is ready.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This can be called before the runtime is ready. Native queues the request and
+flushes it once startup completes.
+
+```kotlin
+ThreadedRuntime.dispatchHeadlessTask(
+  applicationContext,
+  "conversation-release-room-runtime",
+  "hydrateConversation",
+  """{"conversationId":"release-room","limit":50}""",
+)
+```
+
+<Callout type="info" title="What 'queued' means">
+  If you call dispatch before the runtime exists, native creates it, runs the
+  JS bootstrap (including any `index.<runtime>.ts`), and then delivers the
+  queued task. The caller doesn't have to wait for any of that.
+</Callout>
+
+## When to use it
+
+- **Push notification handlers.** Dispatch a hydrate task on receive so the screen is ready when the user taps the notification.
+- **Foreground service work.** Kick off a sync task without bouncing through the main JS runtime.
+- **Native deep-link routers.** Pre-load the target screen's data before navigating in JS.
+
+## Equivalent calls
+
+| Platform | Call |
+| --- | --- |
+| Android (Kotlin) | `ThreadedRuntime.dispatchHeadlessTask(context, name, task, payload)` |
+| iOS (Swift) | `ThreadedRuntime.dispatchHeadlessTask(withRuntimeName:taskName:payloadJson:)` |
+| C++ | `nativecompose::threadedruntime::dispatchHeadlessTask(...)` |
+
+See [Headless background runtime](/docs/threaded-runtime/headless-runtime) for
+the full native-dispatch reference.

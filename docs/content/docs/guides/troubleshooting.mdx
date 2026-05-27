@@ -1,0 +1,64 @@
+---
+title: Troubleshooting
+description: Common errors and what to check first.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Nothing renders on the secondary runtime
+
+Check, in order:
+
+1. **`index.js` loads the generated entry.** It must require `.threaded-runtime/entry` when `global.__THREADED_RUNTIME_ENV__` is set. See [Metro setup](/docs/getting-started/metro-setup).
+2. **The component is at module scope.** Inline or nested components aren't registered.
+3. **The Metro plugin sees the file.** It must be under one of the configured `roots` in `metro.config.js`.
+
+## "Could not find Nitro module" on Android
+
+Add `NitroModulesPackage()` (and `ThreadedZustandPackage()` if you use shared
+state) to `setExtraReactPackagesProvider` in your `MainApplication`. See
+[Android setup](/docs/getting-started/android-setup#register-extra-packages).
+
+## iOS build fails with `_NativeComposeThreadedRuntime` symbol error
+
+Re-run `pod install` from `ios/`, then **Product → Clean Build Folder** in
+Xcode. If you've recently switched between simulators and devices, also
+delete `~/Library/Developer/Xcode/DerivedData`.
+
+## Prewarm seems to have no effect
+
+`prewarm` is a hint, not a blocking start. If you call it and immediately
+mount a surface, the surface mounts before the runtime is fully started. The
+result is still correct, but the *first* mount waits for startup anyway.
+
+To remove that wait, prewarm earlier — from a parent screen, an app-launch
+hook, or [native startup](/docs/threaded-runtime/prewarming#native-prewarm).
+
+## A threaded screen renders blank
+
+- Did the props change between mounts? Verify they're JSON-serializable.
+- Is the runtime name a stable string? A new name every render = a new runtime per mount.
+- Is the threaded entry file generated (`.threaded-runtime/entry.js` exists after a Metro run)?
+
+## A headless task never runs
+
+- Confirm `registerThreadedHeadlessTask('name', ...)` is loaded inside the threaded bundle (i.e. it's reachable from a Metro root, or registered in `index.<runtime>.ts`).
+- The task name must match exactly between `register` and `dispatch`/`runHeadlessTask`.
+- The promise returned by `runHeadlessTask` resolves on dispatch, not on completion — observe progress through shared state.
+
+## Two runtimes overwrite each other's writes
+
+Use `update(fn)` or a path reducer instead of `set(value)`. See
+[Locking and revisions](/docs/shared-state/locking-and-revisions#concurrent-writers).
+
+## `'background'` directive isn't being rewritten
+
+- The function must be declared at **module scope** (not inside another function or component).
+- The directive must be the **first statement** in the function body.
+- The function must be defined in a file under one of the Metro plugin's `roots`.
+
+<Callout type="info" title="When in doubt, inspect the generated entry">
+  Open `.threaded-runtime/entry.js` after a Metro run. It lists every
+  registered component and runtime function — if yours isn't there, the
+  plugin didn't pick it up.
+</Callout>

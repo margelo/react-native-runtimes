@@ -40,3 +40,10 @@ Source docs are also available in the repo:
 - [Threaded runtime package docs](packages/core/README.md)
 - [Threaded Zustand package docs](packages/state/README.md)
 - [Docusaurus source docs](website/docs/intro.md)
+
+## Authors
+
+- **Szymon Kapała** — [GitHub](https://github.com/Szymon20000) · [X](https://x.com/Turbo_Szymon)
+- **Szymon Chmal** — [GitHub](https://github.com/v3ron) · [X](https://x.com/ChmalSzymon)
+- **Alex Shumihin** — [GitHub](https://github.com/pioner92) · [X](https://x.com/pioner_dev)
+- **Ritesh Shukla** — [GitHub](https://github.com/riteshshukla04) · [X](https://x.com/RiteshRk14)

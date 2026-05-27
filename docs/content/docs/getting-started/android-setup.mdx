@@ -1,0 +1,135 @@
+---
+title: Android setup
+description: Register extra React packages, prewarm runtimes from Kotlin, and configure long-lived business runtimes on Android.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+<Steps>
+
+<Step>
+
+### Register extra packages
+
+Threaded runtimes are spawned outside of the host's normal package list, so
+you must hand them the Nitro and shared-state packages explicitly:
+
+```kotlin title="MainApplication.kt"
+import com.nativecompose.threadedruntime.ThreadedRuntime
+import com.nativecompose.threadedzustand.ThreadedZustandPackage
+import com.margelo.nitro.NitroModulesPackage
+
+class MainApplication : Application(), ReactApplication {
+  override fun onCreate() {
+    super.onCreate()
+
+    ThreadedRuntime.setExtraReactPackagesProvider {
+      listOf(
+        NitroModulesPackage(),
+        ThreadedZustandPackage(),
+      )
+    }
+
+    loadReactNative(this)
+  }
+}
+```
+
+<Callout type="warn" title="Forgetting this is the #1 Android setup mistake">
+  If your threaded runtime can't find a Nitro module, it's almost always
+  because `NitroModulesPackage()` is missing from this provider list.
+</Callout>
+
+</Step>
+
+<Step>
+
+### Prewarm runtimes at startup
+
+For any runtime the user is likely to see in the first navigation, start it
+during `onCreate`:
+
+```kotlin
+ThreadedRuntime.prewarmRuntime(
+  applicationContext,
+  "conversation-inbox-runtime",
+)
+```
+
+The call is cheap when the runtime already exists, so you can also call it
+again from JS effects right before a screen opens.
+
+</Step>
+
+<Step>
+
+### App-lifetime business runtime
+
+For background work that needs the same native modules as the main app
+runtime (sync engines, queues, document parsing), use the **business runtime**
+helpers:
+
+```kotlin
+import com.facebook.react.PackageList
+import com.nativecompose.threadedruntime.ThreadedRuntime
+
+ThreadedRuntime.setMainReactPackagesProvider {
+  PackageList(this).packages
+}
+
+ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "background")
+```
+
+A business runtime gets your app's full module surface and is intended to live
+as long as the process does. See
+[Background thread architecture](/docs/threaded-runtime/business-logic-executor)
+for the full pattern.
+
+</Step>
+
+</Steps>
+
+## Native dispatch (C++ and Kotlin)
+
+Dispatch headless tasks from native code when JS isn't a convenient caller —
+for example from a foreground service:
+
+```kotlin
+ThreadedRuntime.dispatchHeadlessTask(
+  applicationContext,
+  "background",
+  "syncWorkspace",
+  """{"workspaceId":"engineering"}""",
+)
+```
+
+```cpp
+#include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
+
+nativecompose::threadedruntime::dispatchHeadlessTask(
+  env,
+  applicationContext,
+  "background",
+  "syncWorkspace",
+  R"({"workspaceId":"engineering"})"
+);
+```
+
+Native dispatch is queued — if the target runtime is still starting, the
+runtime flushes the task once it's ready. The returned status reflects whether
+the dispatch was accepted, not whether the JS body has finished.
+
+## Common issues
+
+<Callout type="warn" title="`Could not find Nitro module`">
+  Add `NitroModulesPackage()` to `setExtraReactPackagesProvider` and make sure
+  the package is also in your normal host packages (so the main runtime can
+  use it too).
+</Callout>
+
+<Callout type="warn" title="Business runtime can't find a native module">
+  Use `setMainReactPackagesProvider { PackageList(this).packages }` so business
+  runtimes see the full module surface. `setExtraReactPackagesProvider` is for
+  threaded UI runtimes only.
+</Callout>

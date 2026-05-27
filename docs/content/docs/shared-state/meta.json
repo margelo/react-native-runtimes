@@ -1,0 +1,4 @@
+{
+  "title": "Shared state",
+  "pages": ["overview", "paths", "persistence", "locking-and-revisions"]
+}

@@ -1,0 +1,63 @@
+---
+title: Chat screen on a secondary runtime
+description: Prewarm a runtime per conversation, then open the screen on the right runtime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+```tsx
+const CHAT_RUNTIME_NAMES = conversations.map(
+  conversation => `conversation-${conversation.id}-runtime`,
+);
+
+function ConversationPicker() {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedId != null) {
+      return;
+    }
+
+    for (const runtimeName of CHAT_RUNTIME_NAMES) {
+      void ThreadedRuntime.prewarm(runtimeName);
+    }
+  }, [selectedId]);
+
+  if (selectedId) {
+    return (
+      <ThreadedScreen
+        component={ConversationScreen}
+        props={{ conversationId: selectedId }}
+        runtimeName={`conversation-${selectedId}-runtime`}
+      />
+    );
+  }
+
+  return (
+    <ConversationList
+      onOpen={conversationId => {
+        void ThreadedRuntime.prewarm(`conversation-${conversationId}-runtime`);
+        setSelectedId(conversationId);
+      }}
+    />
+  );
+}
+```
+
+<Callout type="info" title="Why one runtime per conversation">
+  Chat screens are stateful — composer drafts, scroll position, optimistic
+  messages. A runtime per conversation lets you keep that state alive while
+  the user moves between conversations, and tear it down when they leave.
+</Callout>
+
+## Tuning the prewarm set
+
+Prewarming **every** conversation is overkill for large inboxes. Common
+shapes:
+
+- Prewarm only the first N visible inbox items (5–10).
+- Prewarm the most recently opened conversations.
+- Prewarm on tap-down (touch start) rather than on tap, so the runtime starts ~50 ms earlier.
+
+Pair this with a `destroyOnUnmount` on `ThreadedScreen` if conversations
+should be released as soon as the user leaves them.

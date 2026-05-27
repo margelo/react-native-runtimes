@@ -1,0 +1,120 @@
+---
+title: Rendering components on a background runtime
+description: Use OnRuntime, ThreadedScreen, and threadedComponent to mount React components on a named secondary runtime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Mount a top-level component inside `OnRuntime`. Metro treats the direct child
+as a threaded boundary.
+
+```tsx
+import { OnRuntime } from '@react-native-runtimes/core';
+
+type MessageListProps = {
+  conversationId: string;
+  initialIndex?: number;
+};
+
+function MessageList(props: MessageListProps) {
+  return <ActualMessageList {...props} />;
+}
+
+export function ConversationPreview() {
+  return (
+    <OnRuntime name="messages-runtime">
+      <MessageList conversationId="release-room" initialIndex={120} />
+    </OnRuntime>
+  );
+}
+```
+
+Metro sees `MessageList` as the direct child of `OnRuntime`, rewrites it into
+the same registration shape as `threadedComponent(...)`, gives it a stable
+file-based id, and exports it so the generated threaded runtime entry can load
+it with `require(file).MessageList`.
+
+`OnRuntime` renders a native `ThreadedRuntimeSurface`. The surface asks the
+named runtime to render `ThreadedRuntimeHost`, and that host resolves the
+registered component by name.
+
+## Rules
+
+- The `OnRuntime` child must be a direct component reference, such as `<MessageList />`.
+- The child component must be defined at module top level.
+- Keep the component in module/global scope so Metro can generate the registration and the other runtime can require it by name.
+- Props must be JSON-serializable. Pass ids, keys, or small snapshots; read large or mutable data through a [shared store](/docs/shared-state/overview).
+- `OnRuntime` accepts one threaded component child.
+- Because Metro rewrites the function into an exported const, define it before code that calls it during module initialization.
+
+<Callout type="info" title="Tip: ids over data">
+  Pass the *identity* of what to render — a conversation id, a workspace key —
+  not the data itself. Then load the data from a shared store inside the
+  threaded component. This keeps the prop payload tiny and the threaded
+  boundary cheap.
+</Callout>
+
+## Whole screens
+
+For a whole route, use `ThreadedScreen`. It applies a full-size surface style
+and preloads the runtime by default.
+
+```tsx
+import { ThreadedScreen, threadedComponent } from '@react-native-runtimes/core';
+
+type ConversationScreenProps = {
+  conversationId: string;
+};
+
+export const ConversationScreen = threadedComponent<ConversationScreenProps>(
+  'ConversationScreen',
+  function ConversationScreen({ conversationId }) {
+    return <ConversationRoute conversationId={conversationId} />;
+  },
+);
+
+<ThreadedScreen
+  component={ConversationScreen}
+  props={{ conversationId: 'release-room' }}
+  runtimeName="conversation-release-room-runtime"
+  testID="conversation-threaded-screen"
+/>;
+```
+
+Keep runtime names stable. If the name changes, native creates or switches to
+another runtime.
+
+## Explicit registration
+
+Use `threadedComponent` directly when you want to provide a custom component
+name or avoid the directive transform:
+
+```tsx
+import { Threaded, threadedComponent } from '@react-native-runtimes/core';
+
+export const MessageList = threadedComponent<MessageListProps>(
+  'MessageList',
+  function MessageList(props) {
+    return <ActualMessageList {...props} />;
+  },
+);
+
+<Threaded
+  component={MessageList}
+  props={{ conversationId: 'release-room', initialIndex: 120 }}
+  runtimeName="messages-runtime"
+/>;
+```
+
+## When to use it
+
+- Long chat or feed screens
+- Heavy list renderers such as FlashList or LegendList
+- Components that can keep working while the main JS runtime is blocked
+- Screens where native navigation should stay responsive even when the screen's JS work is busy
+
+<Callout type="warn" title="Don't push trivial UI to a runtime">
+  The runtime itself has a startup cost (small but real) and a per-frame
+  rendering cost. Threaded surfaces pay off when you avoid main-runtime
+  blocking, not when the surface is a button.
+</Callout>

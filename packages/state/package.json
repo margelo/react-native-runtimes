@@ -5,11 +5,19 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "react-native": "src/index.ts",
+  "reactNativeRuntimes": {
+    "android": {
+      "package": "com.nativecompose.threadedzustand.ThreadedZustandPackage"
+    }
+  },
   "scripts": {
     "specs": "nitrogen"
   },
   "files": [
-    "android",
+    "android/src",
+    "android/build.gradle",
+    "android/CMakeLists.txt",
+    "android/fix-prefab.gradle",
     "cpp",
     "ios",
     "nitrogen/generated",
@@ -19,7 +27,8 @@
     "src"
   ],
   "devDependencies": {
-    "nitrogen": "^0.35.7"
+    "nitrogen": "^0.35.7",
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "react": "*",

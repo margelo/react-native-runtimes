@@ -1,0 +1,54 @@
+---
+title: LegendList on a separate runtime
+description: Render a heavy list off the main runtime. Pass identity through props, read the data inside the threaded runtime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use a threaded surface when a whole React component should render away from
+the main runtime. Pass identity through props, then read the large data set
+directly inside the threaded runtime.
+
+```tsx
+function MessageList({ conversationId }: { conversationId: string }) {
+  const messages = useDatabaseQuery(() =>
+    db.messages
+      .where('conversationId')
+      .equals(conversationId)
+      .sortBy('createdAt'),
+  );
+
+  return (
+    <LegendList
+      data={messages}
+      estimatedItemSize={96}
+      keyExtractor={item => item.id}
+      renderItem={renderMessage}
+    />
+  );
+}
+
+<OnRuntime name="messages-runtime">
+  <MessageList conversationId="release-room" />
+</OnRuntime>;
+```
+
+Metro treats the direct child of `OnRuntime` as a threaded boundary and
+registers it in the generated threaded entry. Native mounts
+`ThreadedRuntimeHost` in `messages-runtime`, and that runtime renders the
+list. The main runtime does not serialize the message array; it only passes
+the conversation id.
+
+The sample app includes this as **Legend 2RN**.
+
+<Callout type="info" title="Why this is the canonical big-list pattern">
+  Lists are the most common cause of dropped frames in React Native apps.
+  Pushing them to a runtime that *only* does list work means the main runtime
+  is free for navigation, gestures, and other animation work.
+</Callout>
+
+## Counterpart: main-runtime baseline
+
+The sample app also includes a main-runtime LegendList as a baseline — useful
+for measuring the actual improvement on your device. Keep one screen on each
+side during benchmarking so you have a head-to-head.

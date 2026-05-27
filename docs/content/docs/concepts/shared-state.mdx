@@ -1,0 +1,79 @@
+---
+title: Shared state
+description: A native-backed key/value store that every runtime reads and writes through the same path handles.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`@react-native-runtimes/state` is a small Zustand-like API on top of a **C++
+singleton**. Every runtime that calls into it sees the same value, the same
+revision, and receives notifications when any value changes.
+
+This is the right tool for any state that:
+
+- changes often
+- is too large to pass as props
+- needs to be visible to more than one runtime
+- needs to survive runtime teardown (with persistence enabled)
+
+## Path-based addressing
+
+Each store gives you typed **path handles**:
+
+```tsx
+import { createSharedStore } from '@react-native-runtimes/state';
+
+const chatStore = createSharedStore<{ conversations: Record<string, Message[]> }>({
+  name: 'chat',
+  initialState: { conversations: {} },
+});
+
+const messages = chatStore.path<Message[]>(['conversations', 'release-room']);
+```
+
+A path is a key into the native store — either a dot string or an array of
+segments. Two handles to the same path share state and notifications.
+
+## Read and write
+
+```tsx
+function Conversation() {
+  const list = messages.use(value => value ?? []);
+  return <MessageList messages={list} />;
+}
+
+await messages.set(nextList, true);
+await messages.update(current => [...(current ?? []), newMessage]);
+```
+
+The hook subscribes; the setter writes through the native store, which fans
+out the change to every runtime that has a handle to that path or any parent
+path.
+
+## Hierarchical notifications
+
+Subscribers fire for **related paths**, not only exact matches:
+
+- A subscriber on `conversations` is notified when `conversations.release-room` changes.
+- A subscriber on `conversations.release-room` is notified when `conversations` is replaced.
+
+That makes broad subscriptions ("anything under conversations changed") cheap
+to express.
+
+<Callout title="One writer per path is the rule of thumb" type="info">
+  If two runtimes can both write to the same path, prefer `update(...)` or a
+  reducer — they read the current value through the lock and write back, so
+  concurrent updates compose instead of clobbering each other.
+</Callout>
+
+## When to reach for it instead of props
+
+| Symptom | Use shared state |
+| --- | --- |
+| The threaded prop payload is large | Yes — keep an id in props, read the rest from the store |
+| The data changes often | Yes — props re-serialize on every change |
+| The data needs to be visible to a sibling runtime | Yes |
+| The data is a one-shot config (id, count, mode) | No — props are fine |
+
+See [Shared state overview](/docs/shared-state/overview) for the full API
+including persistence, predeclared subtrees, and revisions.

@@ -1,0 +1,36 @@
+
+def fixPrefabAbis() {
+  def value = rootProject.getProperties().get("reactNativeArchitectures")
+  return value ? value.split(",") : ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
+}
+
+tasks.configureEach { task ->
+  def prefabConfigurePattern = ~/^prefab(.+)ConfigurePackage$/
+  def matcher = task.name =~ prefabConfigurePattern
+  if (matcher.matches()) {
+    def variantName = matcher[0][1]
+    task.outputs.upToDateWhen { false }
+    task.dependsOn("externalNativeBuild${variantName}")
+  }
+}
+
+afterEvaluate {
+  def abis = fixPrefabAbis()
+  def variants = project.android.hasProperty('applicationVariants') ?
+      project.android.applicationVariants :
+      project.android.libraryVariants
+
+  variants.all { variant ->
+    def variantName = variant.name
+    abis.each { abi ->
+      def searchDir = new File(project.projectDir, ".cxx/${variantName}")
+      if (!searchDir.exists()) return
+      searchDir.eachDir { randomDir ->
+        def prefabFile = new File(randomDir, "${abi}/prefab_config.json")
+        if (prefabFile.exists()) {
+          prefabFile.setLastModified(System.currentTimeMillis())
+        }
+      }
+    }
+  }
+}

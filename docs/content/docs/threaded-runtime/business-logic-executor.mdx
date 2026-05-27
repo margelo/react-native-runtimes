@@ -1,0 +1,253 @@
+---
+title: Background thread architecture
+description: A two-runtime pattern — main owns UI, a 'background' runtime owns sync, caching, queues, and parsing.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Use two JavaScript runtimes for app-lifetime background work:
+
+- `main` renders UI and handles user interaction.
+- `background` stays warm and owns sync, caching, queues, parsing, and other non-visual work.
+
+The recommended setup is native prewarm plus shared Zustand state. Schedule
+functions with a fixed-runtime directive when a function belongs to only one
+runtime.
+
+## Native prewarm
+
+Start the background runtime from native app startup. This keeps the runtime
+alive before React screens ask it to do work.
+
+<Tabs items={['Android (Kotlin)', 'iOS (Swift)']}>
+
+<Tab value="Android (Kotlin)">
+
+```kotlin
+import com.facebook.react.PackageList
+import com.nativecompose.threadedruntime.ThreadedRuntime
+
+class MainApplication : Application(), ReactApplication {
+  override fun onCreate() {
+    super.onCreate()
+
+    ThreadedRuntime.setMainReactPackagesProvider {
+      PackageList(this).packages
+    }
+
+    loadReactNative(this)
+    ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "background")
+  }
+}
+```
+
+</Tab>
+<Tab value="iOS (Swift)">
+
+```swift
+import NativeComposeThreadedRuntime
+
+ThreadedRuntime.configure(
+  withReactNativeDelegate: delegate,
+  launchOptions: launchOptions
+)
+
+ThreadedRuntime.prewarmBusinessRuntime("background")
+```
+
+</Tab>
+</Tabs>
+
+## Background runtime entry
+
+Put background-only startup code in a root-level runtime entry file:
+
+```txt
+index.background.ts
+```
+
+The Metro wrapper discovers files named `index.<runtime>.ts` in the project
+root and emits static conditional requires for them. When native starts a
+runtime named `background`, the generated threaded entry loads
+`index.background.ts` inside that runtime only.
+
+Use this file for module-scope work that must exist before native queues are
+flushed:
+
+```tsx title="index.background.ts"
+import { registerThreadedHeadlessTask } from '@react-native-runtimes/core';
+import { business } from './src/businessStore';
+
+registerThreadedHeadlessTask<{ reason: string }>(
+  'business:refresh',
+  async ({ payload }) => {
+    await business.hydrate();
+    await business.update(state => ({
+      lastRefreshReason: payload.reason,
+      refreshCount: state.refreshCount + 1,
+    }));
+  },
+);
+
+void business.hydrate();
+```
+
+<Callout type="warn" title="Keep UI imports out of index.background.ts">
+  Treat the bootstrap file as the background runtime's process: register
+  headless tasks, hydrate stores, start app-lifetime queues, and install
+  background-only listeners. Don't import React components from it.
+</Callout>
+
+The file suffix matches the runtime name. If your native prewarm uses a
+different name, use that same suffix:
+
+```kotlin
+ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "sync-engine")
+```
+
+```txt
+index.sync-engine.ts
+```
+
+## Shared Zustand store
+
+Put shared state in `@react-native-runtimes/state` so `main` and `background`
+can both read and write the same data.
+
+```tsx
+import { createSharedStore } from '@react-native-runtimes/state';
+
+type BusinessState = {
+  business: BusinessSnapshot;
+};
+
+type BusinessSnapshot = {
+  lastRefreshReason: string | null;
+  refreshCount: number;
+};
+
+type BusinessAction = {
+  type: 'refreshRequested';
+  reason: string;
+};
+
+export const businessStore = createSharedStore<BusinessState, BusinessAction>({
+  name: 'business',
+  initialState: {
+    business: {
+      lastRefreshReason: null,
+      refreshCount: 0,
+    },
+  },
+  slices: {
+    business: (state, action) => {
+      if (action.type !== 'refreshRequested') {
+        return state;
+      }
+
+      return {
+        lastRefreshReason: action.reason,
+        refreshCount: state.refreshCount + 1,
+      };
+    },
+  },
+  persist: {
+    key: 'business-v1',
+    subtrees: ['business'],
+  },
+});
+
+export const business = businessStore.path<BusinessSnapshot>('business');
+```
+
+Read it from UI on the main runtime:
+
+```tsx
+function BusinessStatus() {
+  const state = business.use();
+
+  return <Text>{state.lastRefreshReason ?? 'idle'}</Text>;
+}
+```
+
+## Background functions
+
+For work that should always run on the background runtime, define the
+function in module/global scope and make `'background'` the first statement:
+
+```tsx
+async function refreshBusinessState(reason: string) {
+  'background';
+
+  await business.hydrate();
+  await business.update(state => ({
+    lastRefreshReason: reason,
+    refreshCount: state.refreshCount + 1,
+  }));
+
+  return business.get();
+}
+
+const state = await refreshBusinessState('manual');
+```
+
+Metro rewrites that to a registered runtime function and a local scheduled
+alias:
+
+```tsx
+export const refreshBusinessState_ = runtimeFunction.withId(
+  'src/business.refreshBusinessState_',
+  async function refreshBusinessState(reason: string) {
+    'background';
+    // function body
+  },
+);
+
+const refreshBusinessState = call(refreshBusinessState_).on('background');
+```
+
+## Main runtime functions
+
+Use `'main'` for functions that should run on the main runtime. This is
+useful when background work needs to schedule a small UI-owned state update
+back to the main runtime:
+
+```tsx
+async function markRefreshVisible(reason: string) {
+  'main';
+
+  await business.update(state => ({
+    lastRefreshReason: reason,
+    refreshCount: state.refreshCount + 1,
+  }));
+}
+
+await markRefreshVisible('background-sync-complete');
+```
+
+## When to use this pattern
+
+Use the two-runtime architecture when the background side has app-lifetime
+work:
+
+- sync engines
+- caches and hydration
+- queues
+- local search indexing
+- document parsing
+- crypto orchestration through native modules
+
+<Callout type="info" title="Avoid sending payloads back and forth">
+  Prefer shared Zustand state for progress and results. Don't pass large
+  payloads through function arguments — pass ids or storage references
+  instead. The serialization cost dominates real work otherwise.
+</Callout>
+
+Functions that use `'background'` or `'main'` must be declared at module
+scope so Metro can rewrite and register them before calls are made.
+
+Use `ThreadedRuntime.runHeadlessTask(...)` only for native fire-and-forget
+jobs that must be queued before JavaScript has a convenient caller. For
+normal JS request/response work, prefer the function directive or
+`call(fn).on(runtimeName)(...args)`.

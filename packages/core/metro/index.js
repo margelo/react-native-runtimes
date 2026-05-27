@@ -115,6 +115,9 @@ function watchSources({
           schedule();
         }
       });
+      if (typeof watcher.unref === 'function') {
+        watcher.unref();
+      }
       watchers.push(watcher);
     } catch (error) {
       console.warn(

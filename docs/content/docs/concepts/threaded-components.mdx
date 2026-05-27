@@ -1,0 +1,89 @@
+---
+title: Threaded components
+description: How OnRuntime, ThreadedScreen, and threadedComponent register a React component on another runtime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **threaded component** is a React component that has been registered so a
+secondary runtime can mount it by name. There are three ways to register one:
+
+| API | Best for | Registration |
+| --- | --- | --- |
+| `<OnRuntime>` | A component that always belongs to one runtime | Automatic, file-based id |
+| `<ThreadedScreen>` | Whole routes that should render on a runtime | Pair with `threadedComponent` for the component |
+| `threadedComponent(...)` | Explicit registration with a custom id | Manual |
+
+## The threaded surface
+
+Native renders a `ThreadedRuntimeSurface` for each of these. The surface asks
+the named runtime to mount `ThreadedRuntimeHost`, and the host resolves the
+registered component by name and mounts it.
+
+```text
+main runtime                       messages-runtime
+─────────────                      ─────────────────
+<OnRuntime>                        ThreadedRuntimeHost
+  └── ThreadedRuntimeSurface  ─►    └── MessageList
+       (native view)                     (real component)
+```
+
+The boundary is a native view, not a JS bridge. Props cross it once, then the
+threaded runtime owns rendering, scheduling, and re-rendering for that
+subtree.
+
+## Direct child rule
+
+`OnRuntime`'s direct child must be a **component reference at module scope**:
+
+```tsx
+// ✅ Direct child, module scope
+<OnRuntime name="messages-runtime">
+  <MessageList conversationId="release-room" />
+</OnRuntime>
+
+// ❌ Wrapped in another element
+<OnRuntime name="messages-runtime">
+  <View>
+    <MessageList conversationId="release-room" />
+  </View>
+</OnRuntime>
+
+// ❌ Inline lambda
+<OnRuntime name="messages-runtime">
+  {() => <MessageList conversationId="release-room" />}
+</OnRuntime>
+```
+
+Metro needs a stable, file-based reference to register. It rewrites the direct
+child into an exported `const` and registers it under a stable id.
+
+<Callout title="When the direct child rule feels restrictive" type="info">
+  Use `threadedComponent` to give the component an explicit id, then put any
+  wrapper you like *inside* that component. The registered component is the
+  boundary; what it renders is just React.
+</Callout>
+
+## Props cross the boundary as JSON
+
+Props are serialized at the main runtime and deserialized on the threaded
+runtime. They must be JSON-safe:
+
+- ✅ Strings, numbers, booleans, `null`
+- ✅ Plain objects and arrays of the above
+- ❌ Functions, refs, class instances, cyclic objects, native handles
+
+For anything that can't be serialized, [use shared state](/docs/shared-state/overview)
+and pass only an id through props.
+
+## Where the component runs
+
+Once mounted, the component runs entirely on the threaded runtime:
+
+- React reconciliation happens there.
+- Effects, state, refs all live there.
+- Hooks like `useEffect`, `useState`, `useRef` work normally.
+- Native modules and JSI bindings called from there are dispatched on its thread.
+
+The main runtime sees a single native view (`ThreadedRuntimeSurface`). It does
+not re-render when the threaded subtree re-renders.
