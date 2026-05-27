@@ -24,15 +24,22 @@ The package owns the JS registry and host API:
 ## Expo
 
 This package supports Expo via an optional config plugin. The plugin runs during
-`expo prebuild` and configures:
+`expo prebuild` and:
 
-- **Android — `gradle.properties`** — sets `android.minSdkVersion` ≥ 24,
-  `newArchEnabled=true`, and `hermesEnabled=true`. New Architecture is required
-  by Nitro Modules; secondary runtimes always use Hermes.
+- **Expo config — validates (fails on mismatch)**
+  - `newArchEnabled` must be `true` — Nitro Modules require New Architecture.
+  - `jsEngine` / `ios.jsEngine` / `android.jsEngine` must be `hermes` or unset —
+    secondary runtimes always instantiate Hermes. The plugin will not silently
+    flip these flags; set them explicitly in your Expo config.
+- **Android — `gradle.properties`** — bumps `android.minSdkVersion` to ≥ 24.
 - **Android — `MainApplication.kt`** — adds
   `ThreadedRuntime.setExtraReactPackagesProvider { listOf(NitroModulesPackage()) }`
   inside `onCreate` before `loadReactNative(this)`. Secondary runtimes do not
   inherit the host package list, so Nitro must be registered explicitly here.
+  Use `packages` to register companion runtimes packages by npm name (e.g.
+  `'@react-native-runtimes/state'`), or `androidPackages` to register raw FQNs
+  for your own app packages or libraries that don't ship `reactNativeRuntimes`
+  metadata.
 - **iOS — AppDelegate** — adds `import NativeComposeThreadedRuntime` and calls
   `ThreadedRuntime.configure(withReactNativeDelegate:launchOptions:)` at the
   start of `application(_:didFinishLaunchingWithOptions:)`. This call is
@@ -45,7 +52,19 @@ Add the plugin to your `app.config.ts`:
 
 ```ts
 export default {
-  plugins: ['@react-native-runtimes/core'],
+  newArchEnabled: true,
+  plugins: [
+    ['@react-native-runtimes/core', {
+      // Companion packages registered by npm name (recommended).
+      // Each listed package must declare its FQN in its own package.json under
+      // `reactNativeRuntimes.android.package`.
+      packages: ['@react-native-runtimes/state'],
+
+      // Escape hatch: raw Android ReactPackage FQNs for your own app packages
+      // or libraries that don't ship `reactNativeRuntimes` metadata.
+      // androidPackages: ['com.mycompany.MyCustomPackage'],
+    }],
+  ],
 };
 ```
 

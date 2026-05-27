@@ -18,6 +18,7 @@
     "android/build.gradle",
     "android/CMakeLists.txt",
     "android/fix-prefab.gradle",
+    "app.plugin.js",
     "cpp",
     "ios",
     "metro.d.ts",

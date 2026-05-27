@@ -99,38 +99,27 @@ committed to the process-wide singleton.
 
 ## Expo
 
-This package supports Expo via an optional config plugin. The plugin runs during
-`expo prebuild` and configures:
-
-- **Android — `gradle.properties`** — sets `android.minSdkVersion` ≥ 24.
-- **Android — `MainApplication.kt`** — adds `ThreadedZustandPackage()` to the
-  secondary runtime package list. When `@react-native-runtimes/core` plugin runs
-  first (the typical setup), this extends core's `setExtraReactPackagesProvider`
-  block by adding `ThreadedZustandPackage()` to the existing `listOf`. When used
-  without core, the full block is created.
-- **iOS** — no additional setup needed; the Podspec and NitroModules autolinking
-  handle everything automatically.
-
-The package does **not** require Expo at runtime.
-
-Add the plugin to your `app.config.ts`:
+This package does **not** ship its own config plugin. Register it by npm name
+through the `packages` option of `@react-native-runtimes/core` — core reads the
+`reactNativeRuntimes` metadata declared in this package's `package.json` and
+adds `ThreadedZustandPackage` to the secondary runtime's package list:
 
 ```ts
+// app.config.ts
 export default {
+  newArchEnabled: true,
   plugins: [
-    '@react-native-runtimes/core',
-    '@react-native-runtimes/state',
+    ['@react-native-runtimes/core', {
+      packages: ['@react-native-runtimes/state'],
+    }],
   ],
 };
 ```
 
-In most Expo projects `@expo/config-plugins` is already available. If you use a
-custom or minimal Expo setup and `expo prebuild` fails with
-`Cannot find module '@expo/config-plugins'`, install it explicitly:
+On iOS no additional setup is needed — the Podspec and NitroModules autolinking
+handle everything automatically.
 
-```sh
-npm install --save-dev @expo/config-plugins
-```
+The package does **not** require Expo at runtime.
 
 ## Setup
 
