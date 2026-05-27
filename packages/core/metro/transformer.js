@@ -1,5 +1,5 @@
 const upstreamTransformer = require('@react-native/metro-babel-transformer');
-const runtimeFunctionPlugin = require('./runtime-function-babel-plugin');
+const runtimeFunctionPlugin = require('../runtime-function-babel-plugin');
 
 function transform(params) {
   const plugins = [

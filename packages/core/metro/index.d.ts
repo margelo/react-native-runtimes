@@ -1,8 +1,10 @@
 type ThreadedRuntimeMetroOptions = {
   generatedDir?: string;
   generatedEntry?: string;
+  platformExtensions?: string[];
   projectRoot?: string;
   roots?: string[];
+  sourceExtensions?: string[];
 };
 
 type ThreadedRuntimeComponentRegistration = {
@@ -24,8 +26,10 @@ type RuntimeFunctionRegistration = {
 
 export function generateThreadedRuntimeEntry(options: {
   generatedEntry: string;
+  platformExtensions?: string[];
   projectRoot?: string;
   roots?: string[];
+  sourceExtensions?: string[];
 }): {
   components: ThreadedRuntimeComponentRegistration[];
   generatedEntry: string;

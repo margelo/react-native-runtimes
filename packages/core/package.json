@@ -8,11 +8,6 @@
   "expo": {
     "plugin": "./plugin/build/index.js"
   },
-  "scripts": {
-    "specs": "nitrogen",
-    "build:plugin": "tsc -p plugin/tsconfig.json",
-    "prepack": "bun run build:plugin"
-  },
   "files": [
     "android/src",
     "android/build.gradle",
@@ -21,9 +16,7 @@
     "app.plugin.js",
     "cpp",
     "ios",
-    "metro.d.ts",
-    "metro.js",
-    "metro-transformer.js",
+    "metro",
     "nitrogen/generated",
     "nitro.json",
     "NativeComposeThreadedRuntime.podspec",
@@ -32,10 +25,16 @@
     "runtime-function-babel-plugin.js",
     "src"
   ],
+  "scripts": {
+    "specs": "nitrogen",
+    "build:plugin": "tsc -p plugin/tsconfig.json",
+    "prepack": "bun run build:plugin",
+    "test": "bun test metro/__tests__"
+  },
   "typesVersions": {
     "*": {
       "metro": [
-        "metro.d.ts"
+        "metro/index.d.ts"
       ]
     }
   },
