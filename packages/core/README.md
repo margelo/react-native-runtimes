@@ -31,7 +31,6 @@ This package supports Expo via an optional config plugin. The plugin runs during
   - `jsEngine` / `ios.jsEngine` / `android.jsEngine` must be `hermes` or unset —
     secondary runtimes always instantiate Hermes. The plugin will not silently
     flip these flags; set them explicitly in your Expo config.
-- **Android — `gradle.properties`** — bumps `android.minSdkVersion` to ≥ 24.
 - **Android — `MainApplication.kt`** — adds
   `ThreadedRuntime.setExtraReactPackagesProvider { listOf(NitroModulesPackage()) }`
   inside `onCreate` before `loadReactNative(this)`. Secondary runtimes do not

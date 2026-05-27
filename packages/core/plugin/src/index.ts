@@ -2,7 +2,6 @@ import {
   ConfigPlugin,
   createRunOncePlugin,
   withAppDelegate,
-  withGradleProperties,
   withMainApplication,
   withPlugins,
 } from '@expo/config-plugins';
@@ -151,42 +150,6 @@ const withHermesRequired: ConfigPlugin = (config) => {
     }
   }
   return config;
-};
-
-// ─── Android: gradle.properties ───────────────────────────────────────────────
-
-const ANDROID_MIN_SDK = 24;
-
-/**
- * Bumps `android.minSdkVersion` to ≥ 24 when needed. This is the only build
- * flag the plugin writes: it's monotonic-safe (raising the floor never breaks
- * a working build). `newArchEnabled` and `hermesEnabled` are intentionally not
- * written here — they are enforced at the Expo-config level by
- * {@link withNewArchRequired} and {@link withHermesRequired}, and Expo's own
- * prebuild propagates them to gradle.properties.
- */
-const withAndroidGradleProperties: ConfigPlugin = (config) => {
-  return withGradleProperties(config, (gradle) => {
-    const key = 'android.minSdkVersion';
-    const prop = gradle.modResults.find(
-      (item) => item.type === 'property' && item.key === key,
-    );
-
-    if (prop?.type === 'property') {
-      const current = parseInt(prop.value ?? '0', 10);
-      if (current < ANDROID_MIN_SDK) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          `[@react-native-runtimes/core] ${key} bumped from ${current} → ${ANDROID_MIN_SDK}`,
-        );
-        prop.value = String(ANDROID_MIN_SDK);
-      }
-    } else {
-      gradle.modResults.push({ type: 'property', key, value: String(ANDROID_MIN_SDK) });
-    }
-
-    return gradle;
-  });
 };
 
 // ─── Android: MainApplication.kt ──────────────────────────────────────────────
@@ -378,9 +341,6 @@ const withIosThreadedRuntimeConfigure: ConfigPlugin = (config) => {
  * - `jsEngine` (and the platform-specific overrides) must be `hermes` or unset —
  *   secondary runtimes always instantiate `HermesInstance` natively.
  *
- * **Android — `gradle.properties`**
- * - Bumps `android.minSdkVersion` to ≥ 24 if currently below.
- *
  * **Android — `MainApplication.kt`**
  * - Adds `ThreadedRuntime.setExtraReactPackagesProvider { listOf(NitroModulesPackage()) }`
  *   before `loadReactNative(this)`. If a provider block already exists,
@@ -416,7 +376,6 @@ const withRuntimesCore: ConfigPlugin<CorePluginOptions> = (config, options = {})
   withPlugins(config, [
     withNewArchRequired,
     withHermesRequired,
-    withAndroidGradleProperties,
     [withAndroidMainApplicationCore, options],
     withIosThreadedRuntimeConfigure,
   ]);
