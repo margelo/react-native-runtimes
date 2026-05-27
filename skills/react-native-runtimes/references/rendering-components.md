@@ -102,6 +102,7 @@ export const ConversationScreen = threadedComponent<ConversationScreenProps>(
   ```
 - **The child component must be defined at module top level** — not inside another function. Metro attaches the registration to the export.
 - **Threaded component names must be globally unique.** Duplicate names fail the Metro build. The directive form uses a stable file-based id; explicit `threadedComponent('Name', ...)` is what you control.
+- **`threadedComponent(...)` must be assigned to a named export.** The Metro wrapper only scans `ExportNamedDeclaration` nodes, so an unexported `const` or a default export is silently skipped — no build error, but the threaded surface fails at runtime with "component not found." Always use `export const Name = threadedComponent('Name', fn);` — not `const Name = ...` (no export) and not `export default threadedComponent(...)`.
 - **Props must be JSON-serializable.** No functions, refs, class instances, `Map`/`Set`, `BigInt`, circular refs. `Date` becomes `{}` unless you `.toISOString()` first.
 - **`OnRuntime` accepts one threaded child.** For multiple components on the same runtime, render them inside one wrapper component.
 - **Component file must be under one of Metro's `roots`.** If it isn't scanned, the registration doesn't exist on the threaded side.

@@ -65,6 +65,20 @@ const rev = messages.getRevision();              // native revision counter
 
 `get()` and `getRevision()` read the in-process C++ snapshot synchronously. `use()` is a React hook — it reads the snapshot during render and re-renders on commit. None of them return Promises. **Don't write `await messages.get()`** — awaiting a plain value unwraps it (a no-op) and hides the fact that a future API change to make it async would not surface as a type error at the call site.
 
+## Reducer API (legacy, still supported)
+
+If you configured `reducer` or `slices` on the store, dispatch actions through the top-level store API:
+
+```ts
+await store.dispatch(action);                       // run the root reducer (or, with slices, the matching slice)
+await store.dispatchSubtree(subtreeKey, action);    // explicitly target one slice
+const value = store.useStore(selector?);            // React hook — subscribes to whole-store state
+```
+
+`dispatch` runs the reducer in the JS runtime that calls it and commits the result into the C++ singleton; every active runtime receives the broadcast and re-renders subscribed components.
+
+Prefer the path-handle API (`store.path(...).set` / `.update` / `.use`) for new code — it is more granular, avoids broadcasting the entire store shape on every write, and does not require defining a reducer. Use `dispatch` / `useStore` when integrating with existing Redux-style action flows or when migrating code that already depends on this shape.
+
 ## Two writers — use `update`, not `set`
 
 ```ts

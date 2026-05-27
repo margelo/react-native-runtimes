@@ -103,6 +103,7 @@ import com.nativecompose.threadedruntime.ThreadedRuntime
 ThreadedRuntime.prewarmRuntime(applicationContext, "background")
 ThreadedRuntime.prewarmRuntimeWithOptions(applicationContext, "name", kind, useMainNativeModules)
 ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "business-runtime")
+ThreadedRuntime.preloadRuntime(applicationContext, "name")   // alias for prewarmRuntime
 ThreadedRuntime.destroyRuntime(applicationContext, "name")
 ThreadedRuntime.destroyAllRuntimes(applicationContext)
 ThreadedRuntime.getRuntimeNames(applicationContext)   // List<String>
@@ -152,14 +153,22 @@ iOS uses the configured RN delegate for native module lookup on threaded runtime
 ```cpp
 #include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
 
+// Prewarm — create and start a named runtime from native code.
 // Apple (no JNI env / context):
+nativecompose::threadedruntime::prewarmRuntime("conversation-worker-runtime");
+
+// Android (needs JNIEnv* + the Application context):
+nativecompose::threadedruntime::prewarmRuntime(env, applicationContext, "conversation-worker-runtime");
+
+// Headless dispatch — queued if the runtime is still starting; creates the runtime if absent.
+// Apple:
 nativecompose::threadedruntime::dispatchHeadlessTask(
   "conversation-worker-runtime",
   "hydrateConversation",
   R"({"conversationId":"release-room","limit":50})"
 );
 
-// Android (needs JNIEnv* + the Application context):
+// Android:
 nativecompose::threadedruntime::dispatchHeadlessTask(
   env,
   applicationContext,
