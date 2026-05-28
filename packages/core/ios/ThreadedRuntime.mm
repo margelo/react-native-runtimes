@@ -99,7 +99,7 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
   nativecompose::threadedruntime::installRuntimeFunctionJsi(runtime, [_runtimeName UTF8String]);
 
   if ([_delegate respondsToSelector:@selector(host:didInitializeRuntime:)]) {
-    [_delegate host:host didInitializeRuntime:runtime];
+    [(id<RCTHostRuntimeDelegate>)_delegate host:host didInitializeRuntime:runtime];
   }
 }
 
