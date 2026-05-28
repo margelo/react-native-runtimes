@@ -35,6 +35,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (RCTFabricSurface *)createSurfaceWithRuntimeName:(nullable NSString *)runtimeName
                                            appName:(nullable NSString *)appName
                                         properties:(NSDictionary *)properties;
++ (BOOL)isRuntimeReadyForSurfaces:(nullable NSString *)runtimeName;
++ (void)ensureRuntimeStarted:(nullable NSString *)runtimeName;
+
+extern NSString *const ThreadedRuntimeReadyNotification;
+extern NSString *const ThreadedRuntimeReadyNotificationRuntimeNameKey;
 
 @end
 

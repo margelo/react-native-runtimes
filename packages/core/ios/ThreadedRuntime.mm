@@ -12,6 +12,9 @@
 
 #include "RuntimeFunctionJsi.h"
 
+NSString *const ThreadedRuntimeReadyNotification = @"ThreadedRuntimeReadyNotification";
+NSString *const ThreadedRuntimeReadyNotificationRuntimeNameKey = @"runtimeName";
+
 static NSString *const ThreadedRuntimeDefaultRuntimeName = @"background-list";
 static NSString *const ThreadedRuntimeDefaultBusinessRuntimeName = @"business-runtime";
 static NSString *const ThreadedRuntimeDefaultHostAppName = @"ThreadedRuntimeHost";
@@ -234,6 +237,16 @@ static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, N
   return calls;
 }
 
+static NSMutableDictionary<NSString *, NSMutableArray<RCTFabricSurface *> *> *ThreadedRuntimePendingSurfaces()
+{
+  static NSMutableDictionary<NSString *, NSMutableArray<RCTFabricSurface *> *> *surfaces;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    surfaces = [NSMutableDictionary new];
+  });
+  return surfaces;
+}
+
 static NSMutableDictionary<NSString *, RCTPromiseResolveBlock> *ThreadedRuntimeFunctionResolves()
 {
   static NSMutableDictionary<NSString *, RCTPromiseResolveBlock> *resolves;
@@ -265,6 +278,16 @@ static NSMutableSet<NSString *> *ThreadedRuntimeStartingRuntimeNames()
 }
 
 static NSMutableSet<NSString *> *ThreadedRuntimeStartedRuntimeNames()
+{
+  static NSMutableSet<NSString *> *runtimeNames;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    runtimeNames = [NSMutableSet new];
+  });
+  return runtimeNames;
+}
+
+static NSMutableSet<NSString *> *ThreadedRuntimeBundleLoadedRuntimeNames()
 {
   static NSMutableSet<NSString *> *runtimeNames;
   static dispatch_once_t onceToken;
@@ -452,8 +475,10 @@ static NSDictionary *configuredLaunchOptions;
   @synchronized(self) {
     [ThreadedRuntimePendingHeadlessTasks() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimePendingFunctionCalls() removeObjectForKey:normalizedRuntimeName];
+    [ThreadedRuntimePendingSurfaces() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimeStartingRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeStartedRuntimeNames() removeObject:normalizedRuntimeName];
+    [ThreadedRuntimeBundleLoadedRuntimeNames() removeObject:normalizedRuntimeName];
   }
   [ThreadedRuntimeHosts() removeObjectForKey:normalizedRuntimeName];
   [ThreadedRuntimeHostDelegates() removeObjectForKey:normalizedRuntimeName];
@@ -472,8 +497,10 @@ static NSDictionary *configuredLaunchOptions;
   @synchronized(self) {
     [ThreadedRuntimePendingHeadlessTasks() removeAllObjects];
     [ThreadedRuntimePendingFunctionCalls() removeAllObjects];
+    [ThreadedRuntimePendingSurfaces() removeAllObjects];
     [ThreadedRuntimeStartingRuntimeNames() removeAllObjects];
     [ThreadedRuntimeStartedRuntimeNames() removeAllObjects];
+    [ThreadedRuntimeBundleLoadedRuntimeNames() removeAllObjects];
   }
   NSLog(@"[ThreadedRuntime] runtime destroyAll");
   RCTLogInfo(@"[ThreadedRuntime] runtime destroyAll");
@@ -498,9 +525,28 @@ static NSDictionary *configuredLaunchOptions;
       [[RCTFabricSurface alloc] initWithSurfacePresenter:host.surfacePresenter
                                               moduleName:normalizedAppName
                                        initialProperties:properties ?: @{}];
-  dispatch_async(dispatch_get_main_queue(), ^{
-    [surface start];
-  });
+
+  BOOL startNow = NO;
+  @synchronized(self) {
+    if ([ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:normalizedRuntimeName]) {
+      startNow = YES;
+    } else {
+      NSMutableArray<RCTFabricSurface *> *pending =
+          ThreadedRuntimePendingSurfaces()[normalizedRuntimeName];
+      if (pending == nil) {
+        pending = [NSMutableArray new];
+        ThreadedRuntimePendingSurfaces()[normalizedRuntimeName] = pending;
+      }
+      [pending addObject:surface];
+    }
+  }
+
+  if (startNow) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [surface start];
+    });
+  }
+
   return surface;
 }
 
@@ -549,6 +595,62 @@ static NSDictionary *configuredLaunchOptions;
   }
   [self flushHeadlessTasksWithRuntimeName:normalizedRuntimeName host:host];
   [self flushRuntimeFunctionCallsWithRuntimeName:normalizedRuntimeName host:host];
+}
+
++ (void)notifyRuntimeReadyWithRuntimeName:(NSString *)runtimeName
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  BOOL alreadyReady = NO;
+  @synchronized(self) {
+    alreadyReady = [ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:normalizedRuntimeName];
+    if (!alreadyReady) {
+      [ThreadedRuntimeBundleLoadedRuntimeNames() addObject:normalizedRuntimeName];
+    }
+  }
+  if (alreadyReady) {
+    return;
+  }
+  [self flushPendingSurfacesWithRuntimeName:normalizedRuntimeName];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:ThreadedRuntimeReadyNotification
+                      object:nil
+                    userInfo:@{ThreadedRuntimeReadyNotificationRuntimeNameKey : normalizedRuntimeName}];
+  });
+}
+
++ (BOOL)isRuntimeReadyForSurfaces:(NSString *)runtimeName
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  @synchronized(self) {
+    return [ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:normalizedRuntimeName];
+  }
+}
+
++ (void)ensureRuntimeStarted:(NSString *)runtimeName
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  [self configureRuntimeKind:[self runtimeKindForRuntimeName:normalizedRuntimeName]
+                 runtimeName:normalizedRuntimeName];
+  dispatch_async(ThreadedRuntimeQueue(), ^{
+    RCTHost *host = [self ensureHostWithRuntimeName:normalizedRuntimeName];
+    [self startRuntimeAndFlushWithRuntimeName:normalizedRuntimeName host:host];
+  });
+}
+
++ (void)flushPendingSurfacesWithRuntimeName:(NSString *)runtimeName
+{
+  NSArray<RCTFabricSurface *> *surfaces;
+  @synchronized(self) {
+    surfaces = [ThreadedRuntimePendingSurfaces()[runtimeName] copy];
+    [ThreadedRuntimePendingSurfaces() removeObjectForKey:runtimeName];
+  }
+
+  for (RCTFabricSurface *surface in surfaces) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [surface start];
+    });
+  }
 }
 
 + (void)flushHeadlessTasksWithRuntimeName:(NSString *)runtimeName host:(RCTHost *)host
@@ -775,6 +877,15 @@ RCT_EXPORT_METHOD(completeRuntimeFunctionCall
   [ThreadedRuntime completeRuntimeFunctionCallWithCallId:callId
                                              resultJson:resultJson
                                               errorJson:errorJson];
+  resolve(nil);
+}
+
+RCT_EXPORT_METHOD(notifyRuntimeReady
+                  : (NSString *)runtimeName resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject)
+{
+  [ThreadedRuntime notifyRuntimeReadyWithRuntimeName:runtimeName];
   resolve(nil);
 }
 

@@ -93,11 +93,28 @@ type ThreadedRuntimeNativeModule = {
   destroyRuntime?: (runtimeName: string) => Promise<void>;
   destroyAllRuntimes?: () => Promise<void>;
   getRuntimeNames?: () => Promise<string[]>;
+  notifyRuntimeReady?: (runtimeName: string) => Promise<void>;
 };
 
 const nativeRuntime = NativeModules.ThreadedRuntime as
   | ThreadedRuntimeNativeModule
   | undefined;
+
+// Inside a threaded runtime, schedule a "ready" signal that fires AFTER entry.js
+// finishes evaluating. RCTHost's hostDidStart fires before bundle eval, so it
+// can't be used to know when AppRegistry is populated. A microtask drains right
+// after the current synchronous bundle evaluation completes.
+(() => {
+  const env = (globalThis as { __THREADED_RUNTIME_ENV__?: { runtimeName?: string } })
+    .__THREADED_RUNTIME_ENV__;
+  const runtimeName = env?.runtimeName;
+  if (!runtimeName) {
+    return;
+  }
+  Promise.resolve().then(() => {
+    nativeRuntime?.notifyRuntimeReady?.(runtimeName);
+  });
+})();
 
 let runtimeFunctionsNitro: ThreadedRuntimeFunctionsNitro | null | undefined;
 let didWarnRuntimeFunctionsNitroUnavailable = false;

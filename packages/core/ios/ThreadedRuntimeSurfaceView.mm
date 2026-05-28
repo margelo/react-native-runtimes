@@ -13,6 +13,7 @@ static NSString *const ThreadedRuntimeSurfaceDefaultHostAppName = @"ThreadedRunt
 @implementation ThreadedRuntimeSurfaceView {
   RCTFabricSurface *_surface;
   RCTSurfaceHostingView *_surfaceView;
+  BOOL _observingRuntimeReady;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame
@@ -30,6 +31,11 @@ static NSString *const ThreadedRuntimeSurfaceDefaultHostAppName = @"ThreadedRunt
   return self;
 }
 
+- (void)dealloc
+{
+  [self stopObservingRuntimeReady];
+}
+
 - (void)didMoveToWindow
 {
   [super didMoveToWindow];
@@ -37,6 +43,42 @@ static NSString *const ThreadedRuntimeSurfaceDefaultHostAppName = @"ThreadedRunt
     [self ensureSurface];
   } else {
     [self stopSurface];
+    [self stopObservingRuntimeReady];
+  }
+}
+
+- (void)startObservingRuntimeReady
+{
+  if (_observingRuntimeReady) {
+    return;
+  }
+  _observingRuntimeReady = YES;
+  [[NSNotificationCenter defaultCenter] addObserver:self
+                                           selector:@selector(handleRuntimeReady:)
+                                               name:ThreadedRuntimeReadyNotification
+                                             object:nil];
+}
+
+- (void)stopObservingRuntimeReady
+{
+  if (!_observingRuntimeReady) {
+    return;
+  }
+  _observingRuntimeReady = NO;
+  [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                  name:ThreadedRuntimeReadyNotification
+                                                object:nil];
+}
+
+- (void)handleRuntimeReady:(NSNotification *)note
+{
+  NSString *readyRuntimeName = note.userInfo[ThreadedRuntimeReadyNotificationRuntimeNameKey];
+  if (![readyRuntimeName isEqualToString:_runtimeName]) {
+    return;
+  }
+  [self stopObservingRuntimeReady];
+  if (self.window != nil && _surface == nil) {
+    [self ensureSurface];
   }
 }
 
@@ -132,6 +174,12 @@ static NSString *const ThreadedRuntimeSurfaceDefaultHostAppName = @"ThreadedRunt
 - (void)ensureSurface
 {
   if (_surface != nil) {
+    return;
+  }
+
+  if (![ThreadedRuntime isRuntimeReadyForSurfaces:_runtimeName]) {
+    [self startObservingRuntimeReady];
+    [ThreadedRuntime ensureRuntimeStarted:_runtimeName];
     return;
   }
 
