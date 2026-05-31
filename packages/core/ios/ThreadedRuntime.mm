@@ -29,6 +29,14 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
 
 @end
 
+// `setBundleURLProvider:` is implemented by RCTHost on all supported RN versions
+// but isn't declared in RN 0.83's public RCTHost.h. Forward-declare it so we can
+// call it explicitly after init (RN 0.83's initializer drops the provider param;
+// RN 0.85+ stores it — calling the setter is correct/harmless on both).
+@interface RCTHost (RNRBundleURLProvider)
+- (void)setBundleURLProvider:(RCTHostBundleURLProvider)bundleURLProvider;
+@end
+
 @interface ThreadedRuntimeHostDelegate : NSObject <RCTHostDelegate>
 
 - (instancetype)initWithDelegate:(id<RCTReactNativeFactoryDelegate>)delegate runtimeName:(NSString *)runtimeName;
@@ -42,6 +50,7 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
   __weak id<RCTReactNativeFactoryDelegate> _delegate;
   NSString *_runtimeName;
   NSString *_kind;
+  BOOL _didInitializeRuntime;
 }
 
 - (instancetype)initWithDelegate:(id<RCTReactNativeFactoryDelegate>)delegate runtimeName:(NSString *)runtimeName
@@ -81,6 +90,13 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
 
 - (void)host:(RCTHost *)host didInitializeRuntime:(facebook::jsi::Runtime &)runtime
 {
+  // Idempotency guard: on RN 0.85+ this object is set as BOTH hostDelegate and
+  // runtimeDelegate, so RCTHost invokes this twice. Run setup once.
+  if (_didInitializeRuntime) {
+    return;
+  }
+  _didInitializeRuntime = YES;
+
   auto global = runtime.global();
   global.setProperty(runtime, "global", global);
   global.setProperty(runtime, "globalThis", global);
@@ -728,9 +744,10 @@ static NSDictionary *configuredLaunchOptions;
   ThreadedRuntimeTurboModuleDelegate *turboModuleDelegate =
       [[ThreadedRuntimeTurboModuleDelegate alloc] initWithDelegate:delegate];
   __weak id<RCTReactNativeFactoryDelegate> weakDelegate = delegate;
-  RCTHost *host = [[RCTHost alloc] initWithBundleURLProvider:^NSURL *_Nullable {
+  RCTHostBundleURLProvider bundleURLProvider = ^NSURL *_Nullable {
     return [weakDelegate bundleURL];
-  }
+  };
+  RCTHost *host = [[RCTHost alloc] initWithBundleURLProvider:bundleURLProvider
                                       hostDelegate:hostDelegate
                         turboModuleManagerDelegate:turboModuleDelegate
                                   jsEngineProvider:^std::shared_ptr<facebook::react::JSRuntimeFactory>() {
@@ -740,6 +757,17 @@ static NSDictionary *configuredLaunchOptions;
                                         &js_runtime_factory_destroy);
                                   }
                                      launchOptions:configuredLaunchOptions];
+  // RN 0.83's RCTHost initializer drops the bundle URL provider (only RN 0.85+
+  // stores it in init), so set it explicitly — otherwise the secondary runtime
+  // loads with a nil bundle URL ("No script URL provided").
+  [host setBundleURLProvider:bundleURLProvider];
+  // RN 0.83 dispatches `host:didInitializeRuntime:` ONLY to runtimeDelegate
+  // (RN 0.85+ also calls it on hostDelegate). That callback sets
+  // __THREADED_RUNTIME_ENV__, which the index gate needs to load the threaded
+  // entry (and register ThreadedRuntimeFunctionRunner). The hostDelegate already
+  // implements it; reuse it as runtimeDelegate (the _didInitializeRuntime guard
+  // makes the resulting double-call on RN 0.85 a no-op).
+  host.runtimeDelegate = (id<RCTHostRuntimeDelegate>)hostDelegate;
 
   @synchronized(self) {
     RCTHost *existingHost = ThreadedRuntimeHosts()[runtimeName];

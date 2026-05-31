@@ -54,11 +54,24 @@ function withThreadedRuntime(config, options = {}) {
     watchSources({ projectRoot, roots, onChange: regenerate });
   }
 
+  const baseGetPolyfills = config.serializer && config.serializer.getPolyfills;
+
   return {
     ...config,
     transformer: {
       ...(config.transformer || {}),
       babelTransformerPath: path.join(__dirname, 'metro-transformer.js'),
+    },
+    serializer: {
+      ...(config.serializer || {}),
+      // Secondary runtimes don't get Expo's native `global.expo` host installed;
+      // prepend a polyfill (runs before every module, in every runtime) that
+      // stubs it so expo-modules-core's load-time reads don't crash them. Inert
+      // on bare React Native.
+      getPolyfills: (opts) => [
+        ...(baseGetPolyfills ? baseGetPolyfills(opts) : []),
+        path.join(__dirname, 'secondary-runtime-polyfill.js'),
+      ],
     },
     watchFolders: Array.from(
       new Set([...(config.watchFolders || []), generatedDir]),

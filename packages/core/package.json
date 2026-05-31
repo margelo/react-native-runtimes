@@ -76,6 +76,7 @@
     "metro.d.ts",
     "metro.js",
     "metro-transformer.js",
+    "secondary-runtime-polyfill.js",
     "nitrogen/generated",
     "nitro.json",
     "NativeComposeThreadedRuntime.podspec",
