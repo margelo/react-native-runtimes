@@ -7,8 +7,12 @@
 #import <React-RCTAppDelegate/RCTAppSetupUtils.h>
 #import <React-RCTAppDelegate/RCTReactNativeFactory.h>
 #import <ReactCommon/RCTHost.h>
+#import <react/renderer/runtimescheduler/RuntimeScheduler.h>
+#import <react/renderer/runtimescheduler/RuntimeSchedulerBinding.h>
 #import <react/runtime/JSRuntimeFactory.h>
 #import <react/runtime/JSRuntimeFactoryCAPI.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 
 #include "RuntimeFunctionJsi.h"
 
@@ -45,6 +49,94 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
                              kind:(NSString *)kind;
 
 @end
+
+#pragma mark - Expo modules support for secondary runtimes
+
+// objc_setAssociatedObject key: keeps each secondary runtime's Expo AppContext
+// alive for as long as its RCTHost.
+static char ThreadedRuntimeExpoAppContextKey;
+
+namespace {
+
+// Mirror of `expo::dispatchOnReactScheduler` (ExpoModulesCore's
+// EXReactSchedulerDispatch.h). ExpoModulesJSI calls this trampoline to dispatch
+// async work onto this runtime's JS thread. Defined here (identical signature
+// and behavior) so this pod has no compile-time dependency on ExpoModulesCore —
+// Expo documents that "hosts that initialize their own runtime pass a pointer
+// to this function as the `dispatch` argument of AppContext.setRuntime".
+void ThreadedRuntimeDispatchOnReactScheduler(void *nativeScheduler, int priority, void (^callback)()) noexcept
+{
+  auto *scheduler = static_cast<facebook::react::RuntimeScheduler *>(nativeScheduler);
+  scheduler->scheduleTask(
+      static_cast<facebook::react::SchedulerPriority>(priority),
+      [callback](facebook::jsi::Runtime &) { callback(); });
+}
+
+} // namespace
+
+// Installs Expo modules (`global.expo` + `expo.modules.*`) into a secondary
+// runtime by creating a dedicated EXAppContext for its host — the same setup
+// ExpoReactNativeFactory performs for the MAIN runtime in
+// `host:didInitializeRuntime:` (expo/ios/AppDelegates/ExpoReactNativeFactory.mm).
+// Without this, Expo's JSI host only exists on the main runtime and any Expo
+// module used from a threaded runtime is a no-op stub.
+//
+// Done reflectively (NSClassFromString + objc_msgSend) so there is no
+// compile-time dependency on ExpoModulesCore; in bare React Native apps the
+// EXAppContext class doesn't exist and this is a no-op.
+static void ThreadedRuntimeInstallExpoAppContext(RCTHost *host, facebook::jsi::Runtime &runtime)
+{
+  Class appContextClass = NSClassFromString(@"EXAppContext");
+  if (appContextClass == nil) {
+    return; // Not an Expo app.
+  }
+  if (objc_getAssociatedObject(host, &ThreadedRuntimeExpoAppContextKey) != nil) {
+    return; // Already installed for this host.
+  }
+
+  SEL setRuntimeSel = NSSelectorFromString(@"setRuntime:scheduler:dispatch:");
+  SEL registerModulesSel = NSSelectorFromString(@"registerNativeModules");
+  id appContext = [[appContextClass alloc] init];
+  if (![appContext respondsToSelector:setRuntimeSel] || ![appContext respondsToSelector:registerModulesSel]) {
+    RCTLogWarn(
+        @"[ThreadedRuntime] EXAppContext exists but its API is not the expected one; "
+        @"Expo modules won't be available on secondary runtimes");
+    return;
+  }
+
+  // Resolve this runtime's React scheduler — exactly like ExpoReactNativeFactory —
+  // so ExpoModulesJSI can dispatch async work back onto this runtime's JS thread.
+  // If the binding is missing, pass nullptr for both: AppContext falls back to a
+  // synchronous scheduler.
+  auto binding = facebook::react::RuntimeSchedulerBinding::getBinding(runtime);
+  auto scheduler = binding ? binding->getRuntimeScheduler() : nullptr;
+
+  using SetRuntimeFn = void (*)(id, SEL, void *, void *, const void *);
+  ((SetRuntimeFn)objc_msgSend)(
+      appContext,
+      setRuntimeSel,
+      (void *)&runtime,
+      scheduler ? (void *)scheduler.get() : nullptr,
+      scheduler ? (const void *)&ThreadedRuntimeDispatchOnReactScheduler : nullptr);
+
+  // Hand the host to the AppContext (module/view lookups go through it).
+  Class hostWrapperClass = NSClassFromString(@"EXHostWrapper");
+  SEL initWithHostSel = NSSelectorFromString(@"initWithHost:");
+  SEL setHostWrapperSel = NSSelectorFromString(@"setHostWrapper:");
+  if (hostWrapperClass != nil && [appContext respondsToSelector:setHostWrapperSel]) {
+    id wrapper = ((id (*)(id, SEL, RCTHost *))objc_msgSend)([hostWrapperClass alloc], initWithHostSel, host);
+    if (wrapper != nil) {
+      ((void (*)(id, SEL, id))objc_msgSend)(appContext, setHostWrapperSel, wrapper);
+    }
+  }
+
+  // Registers the Expo module definitions; setRuntime above already installed
+  // `global.expo` (AppContext.prepareRuntime runs on runtime assignment).
+  ((void (*)(id, SEL))objc_msgSend)(appContext, registerModulesSel);
+
+  objc_setAssociatedObject(host, &ThreadedRuntimeExpoAppContextKey, appContext, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  RCTLogInfo(@"[ThreadedRuntime] Installed Expo AppContext on secondary runtime");
+}
 
 @implementation ThreadedRuntimeHostDelegate {
   __weak id<RCTReactNativeFactoryDelegate> _delegate;
@@ -121,6 +213,10 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
   if ([_delegate respondsToSelector:@selector(host:didInitializeRuntime:)]) {
     [(id<RCTHostRuntimeDelegate>)_delegate host:host didInitializeRuntime:runtime];
   }
+
+  // In Expo apps, give this secondary runtime a real `global.expo` (its own
+  // EXAppContext) so Expo modules work here too — not just on the main runtime.
+  ThreadedRuntimeInstallExpoAppContext(host, runtime);
 }
 
 @end

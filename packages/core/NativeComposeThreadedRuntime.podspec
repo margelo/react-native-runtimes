@@ -37,4 +37,8 @@ Pod::Spec.new do |s|
 
   install_modules_dependencies(s)
   s.dependency "React-RCTAppDelegate"
+  # For RuntimeScheduler/RuntimeSchedulerBinding headers — used to give Expo's
+  # AppContext a JS-thread dispatcher when installing Expo modules into
+  # secondary runtimes (no-op in bare React Native apps).
+  s.dependency "React-runtimescheduler"
 end
