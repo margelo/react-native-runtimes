@@ -841,7 +841,25 @@ static NSDictionary *configuredLaunchOptions;
       [[ThreadedRuntimeTurboModuleDelegate alloc] initWithDelegate:delegate];
   __weak id<RCTReactNativeFactoryDelegate> weakDelegate = delegate;
   RCTHostBundleURLProvider bundleURLProvider = ^NSURL *_Nullable {
-    return [weakDelegate bundleURL];
+    NSURL *url = [weakDelegate bundleURL];
+    if (url != nil) {
+      return url;
+    }
+    Class devLauncherClass = NSClassFromString(@"EXDevLauncherController");
+    if (devLauncherClass != nil) {
+      SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+      SEL sourceUrlSel = NSSelectorFromString(@"sourceUrl");
+      if ([devLauncherClass respondsToSelector:sharedSel]) {
+        id controller = ((id (*)(id, SEL))objc_msgSend)(devLauncherClass, sharedSel);
+        if ([controller respondsToSelector:sourceUrlSel]) {
+          NSURL *devLauncherURL = ((NSURL *(*)(id, SEL))objc_msgSend)(controller, sourceUrlSel);
+          if (devLauncherURL != nil) {
+            return devLauncherURL;
+          }
+        }
+      }
+    }
+    return url; // nil — preserve original behavior for non-dev-client setups.
   };
   RCTHost *host = [[RCTHost alloc] initWithBundleURLProvider:bundleURLProvider
                                       hostDelegate:hostDelegate
