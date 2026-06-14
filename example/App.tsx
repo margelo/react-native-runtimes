@@ -40,6 +40,7 @@ import { ChatBubble } from './src/chat/ChatBubble';
 import type { RenderedChatItem } from './src/native/ComposeChatListNativeComponent';
 import {
   call,
+  getCurrentRuntime,
   OnRuntime,
   threadedComponent,
   Threaded,
@@ -2920,15 +2921,7 @@ function titleForRnMode(mode: RnBenchmarkMode) {
 }
 
 function runtimeKind() {
-  const globals = globalThis as {
-    __COMPOSE_CHAT_LIST_ENV__?: { kind?: string };
-    __THREADED_RUNTIME_ENV__?: { kind?: string };
-  };
-  return (
-    globals.__THREADED_RUNTIME_ENV__?.kind ??
-    globals.__COMPOSE_CHAT_LIST_ENV__?.kind ??
-    'main'
-  );
+  return getCurrentRuntime().kind ?? 'main';
 }
 
 function scrollRnListToIndex(

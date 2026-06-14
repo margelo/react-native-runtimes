@@ -124,7 +124,11 @@ Add the generated folder to `.gitignore`:
 Load the generated entry only inside threaded runtimes:
 
 ```js
-if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
+const {
+  isMainRuntime,
+} = require('@react-native-runtimes/core');
+
+if (!isMainRuntime()) {
   require('./.threaded-runtime/entry');
 }
 ```
@@ -134,4 +138,20 @@ The generated entry registers lazy component loaders and the `ThreadedRuntimeHos
 For runtime-specific startup code, add root-level files named
 `index.<runtime>.ts`, for example `index.business-runtime.ts`. The generated
 entry emits static conditional requires for those files and matches `<runtime>`
-against `global.__THREADED_RUNTIME_ENV__.kind` and `.runtimeName`.
+against `getCurrentRuntime().kind` and `.name`.
+
+## Runtime Globals
+
+Use the public runtime helpers in app code:
+
+```ts
+import { getCurrentRuntime, isMainRuntime } from '@react-native-runtimes/core';
+```
+
+`global.__THREADED_RUNTIME_ENV__` is the only supported runtime identity global.
+It is installed before the secondary runtime bundle executes and currently
+contains `kind` and `runtimeName`.
+
+`global.__rnrRegisterRuntimeFunction` and `global.__rnrCallRuntimeFunction` are
+internal implementation details for runtime functions and should not be used by
+app code.

@@ -118,17 +118,10 @@ const nativeRuntime = NativeModules.ThreadedRuntime as
 
 let runtimeFunctionsNitro: ThreadedRuntimeFunctionsNitro | null | undefined;
 let didWarnRuntimeFunctionsNitroUnavailable = false;
+let didInstallThreadedRuntimeEventEmitterFallback = false;
 
 function currentRuntimeName() {
-  const globals = globalThis as {
-    __THREADED_RUNTIME_ENV__?: { runtimeName?: string };
-    __COMPOSE_CHAT_LIST_ENV__?: { runtimeName?: string };
-  };
-  return (
-    globals.__THREADED_RUNTIME_ENV__?.runtimeName ??
-    globals.__COMPOSE_CHAT_LIST_ENV__?.runtimeName ??
-    DEFAULT_RUNTIME_NAME
-  );
+  return getCurrentRuntime().name ?? DEFAULT_RUNTIME_NAME;
 }
 
 export const MAIN_RUNTIME_NAME = 'main';
@@ -142,10 +135,8 @@ export type CurrentRuntimeInfo = {
 export function getCurrentRuntime(): CurrentRuntimeInfo {
   const globals = globalThis as {
     __THREADED_RUNTIME_ENV__?: { runtimeName?: string; kind?: string };
-    __COMPOSE_CHAT_LIST_ENV__?: { runtimeName?: string; kind?: string };
   };
-  const env =
-    globals.__THREADED_RUNTIME_ENV__ ?? globals.__COMPOSE_CHAT_LIST_ENV__;
+  const env = globals.__THREADED_RUNTIME_ENV__;
   if (env?.runtimeName) {
     return {
       isMain: false,
@@ -162,6 +153,35 @@ export function getCurrentRuntimeName(): string {
 
 export function isMainRuntime(): boolean {
   return getCurrentRuntime().isMain;
+}
+
+function getRuntimeFunctionJsiBindings() {
+  const globals = globalThis as RuntimeFunctionJsiGlobal;
+  return {
+    registerRuntimeFunction: globals.__rnrRegisterRuntimeFunction,
+    callRuntimeFunction: globals.__rnrCallRuntimeFunction,
+  };
+}
+
+function hasRuntimeFunctionJsiBindings() {
+  const bindings = getRuntimeFunctionJsiBindings();
+  return !!(
+    bindings.registerRuntimeFunction && bindings.callRuntimeFunction
+  );
+}
+
+function registerRuntimeFunctionBinding(
+  id: string,
+  loadFunction: RuntimeFunctionLoader,
+) {
+  getRuntimeFunctionJsiBindings().registerRuntimeFunction?.(id, loadFunction);
+}
+
+function callRuntimeFunctionBinding(functionId: string, argsJson: string) {
+  return getRuntimeFunctionJsiBindings().callRuntimeFunction?.(
+    functionId,
+    argsJson,
+  );
 }
 
 function getRuntimeFunctionsNitro() {
@@ -198,11 +218,7 @@ function getRuntimeFunctionsNitro() {
 }
 
 function installRuntimeFunctionJsi() {
-  const globals = globalThis as RuntimeFunctionJsiGlobal;
-  if (
-    globals.__rnrRegisterRuntimeFunction &&
-    globals.__rnrCallRuntimeFunction
-  ) {
+  if (hasRuntimeFunctionJsiBindings()) {
     return;
   }
 
@@ -325,10 +341,7 @@ export function registerRuntimeFunction<TFunction extends AnyFunction>(
 ) {
   installRuntimeFunctionJsi();
   runtimeFunctions.set(id, loadFunction as RuntimeFunctionLoader);
-  (globalThis as RuntimeFunctionJsiGlobal).__rnrRegisterRuntimeFunction?.(
-    id,
-    loadFunction as RuntimeFunctionLoader,
-  );
+  registerRuntimeFunctionBinding(id, loadFunction as RuntimeFunctionLoader);
 }
 
 function attachRuntimeFunction<TFunction extends AnyFunction>(
@@ -624,10 +637,12 @@ function loadRegisteredRuntimeFunction(functionId: string) {
 
 function callRegisteredRuntimeFunction(functionId: string, argsJson: string) {
   installRuntimeFunctionJsi();
-  const jsiCall = (globalThis as RuntimeFunctionJsiGlobal)
-    .__rnrCallRuntimeFunction;
+  const jsiCall = callRuntimeFunctionBinding;
   if (jsiCall) {
-    return jsiCall(functionId, argsJson);
+    const result = jsiCall(functionId, argsJson);
+    if (result !== undefined) {
+      return result;
+    }
   }
 
   let args: unknown[];
@@ -844,17 +859,11 @@ const registerCallableModule =
   ) => void;
 
 function installThreadedRuntimeEventEmitterFallback() {
-  const globals = globalThis as {
-    __THREADED_RUNTIME_EVENT_EMITTER_FALLBACK__?: boolean;
-  };
-  if (
-    Platform.OS !== 'ios' ||
-    globals.__THREADED_RUNTIME_EVENT_EMITTER_FALLBACK__
-  ) {
+  if (Platform.OS !== 'ios' || didInstallThreadedRuntimeEventEmitterFallback) {
     return;
   }
 
-  globals.__THREADED_RUNTIME_EVENT_EMITTER_FALLBACK__ = true;
+  didInstallThreadedRuntimeEventEmitterFallback = true;
   registerCallableModule('RCTEventEmitter', () => ({
     receiveEvent() {},
     receiveTouches() {},
