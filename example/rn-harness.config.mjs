@@ -16,22 +16,12 @@ const config = {
   runners: [
     androidPlatform({
       name: 'android',
-      device: androidEmulator(
-        process.env.AVD_NAME ?? 'Pixel_8',
-        // On CI the AVD does not exist yet, so pass the full AVD spec and let
-        // the harness create it. Locally, reuse the existing AVD as-is.
-        isCI
-          ? {
-              apiLevel: Number(process.env.DEVICE_API_LEVEL ?? 36),
-              profile: process.env.DEVICE_PROFILE ?? 'pixel_7',
-              diskSize: process.env.AVD_DISK_SIZE ?? '1G',
-              heapSize: process.env.AVD_HEAP_SIZE ?? '1G',
-              snapshot: {
-                enabled: true,
-              },
-            }
-          : undefined,
-      ),
+      // Always reuse an already-running emulator (never create/boot/snapshot
+      // one from the harness). On CI, android-emulator-runner boots the
+      // emulator named AVD_NAME; locally, use your running AVD. This keeps the
+      // harness from owning the emulator lifecycle — it never issues the
+      // blocking `adb emu kill` teardown that hangs snapshot-enabled emulators.
+      device: androidEmulator(process.env.AVD_NAME ?? 'Pixel_8_API_35'),
       bundleId: 'com.nativecomposechat',
     }),
     applePlatform({
