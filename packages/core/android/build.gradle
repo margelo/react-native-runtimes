@@ -31,6 +31,15 @@ apply plugin: "com.facebook.react"
 apply from: '../nitrogen/generated/android/NativeComposeThreadedRuntime+autolinking.gradle'
 apply from: "./fix-prefab.gradle"
 
+// Honour the app's `reactNativeArchitectures` so this module builds the same
+// ABIs as react-native-nitro-modules. Otherwise this lib builds all 4 ABIs
+// while nitro only built (e.g.) arm64-v8a, so the NitroModules prefab .so is
+// missing for the extra ABIs and linking fails with undefined nitro symbols.
+def reactNativeArchitectures() {
+  def value = rootProject.getProperties().get("reactNativeArchitectures")
+  return value ? value.split(",") : ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
+}
+
 android {
   namespace "com.nativecompose.threadedruntime"
 
@@ -43,6 +52,7 @@ android {
     externalNativeBuild {
       cmake {
         arguments "-DANDROID_STL=c++_shared"
+        abiFilters (*reactNativeArchitectures())
       }
     }
   }

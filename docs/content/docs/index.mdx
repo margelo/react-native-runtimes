@@ -1,0 +1,109 @@
+---
+title: Overview
+description: React Native Runtimes lets a React Native app run UI and state work across multiple named JavaScript runtimes.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+import {
+  RocketIcon,
+  LayersIcon,
+  DatabaseIcon,
+  WrenchIcon,
+  BookOpenIcon,
+  SparklesIcon,
+} from 'lucide-react';
+
+**React Native Runtimes** is a pair of React Native libraries that let your
+app run UI and state work across several JavaScript runtimes:
+
+- [`@react-native-runtimes/core`](/docs/threaded-runtime/render-components) — mounts React components, whole screens, or headless tasks on **named secondary runtimes**.
+- [`@react-native-runtimes/state`](/docs/shared-state/overview) — a small Zustand-like API backed by **native C++ state** so every runtime sees the same value.
+
+When you use both together, your main runtime stays free for navigation,
+gestures, and animations while another runtime owns the heavy work — chat
+screens, infinite lists, sync engines, headless hydration, or anything that
+would otherwise block the UI.
+
+<Callout title="Why two runtimes?">
+  In React Native, all your JS — list rendering, sync, parsing, every business
+  function — competes for one thread. A blocked main runtime means dropped
+  frames, janky scroll, and slow navigation. With React Native Runtimes you
+  push that work onto a *named* secondary runtime and keep the main one
+  responsive.
+</Callout>
+
+## Start here
+
+<Cards>
+  <Card
+    icon={<RocketIcon />}
+    title="Quick start"
+    description="Five-minute path from install to rendering on a second runtime."
+    href="/docs/getting-started/quick-start"
+  />
+  <Card
+    icon={<WrenchIcon />}
+    title="Installation"
+    description="Add the packages, wire up iOS, Android, and Metro."
+    href="/docs/getting-started/installation"
+  />
+  <Card
+    icon={<BookOpenIcon />}
+    title="Core concepts"
+    description="Runtimes, threaded components, scheduled functions, shared state."
+    href="/docs/concepts/runtimes"
+  />
+  <Card
+    icon={<SparklesIcon />}
+    title="Recipes"
+    description="Real-world examples — chat screens, lists, headless hydration, shared trees."
+    href="/docs/recipes/chat-on-secondary-runtime"
+  />
+</Cards>
+
+## What you can build
+
+<Cards>
+  <Card
+    icon={<LayersIcon />}
+    title="Threaded UI"
+    description="A whole screen — say a chat or feed — that renders on its own runtime, never blocking navigation."
+    href="/docs/threaded-runtime/render-components"
+  />
+  <Card
+    icon={<DatabaseIcon />}
+    title="Shared state across runtimes"
+    description="Native-backed Zustand paths that stay in sync between the main runtime and every threaded runtime."
+    href="/docs/shared-state/overview"
+  />
+</Cards>
+
+## Mental model
+
+- A **runtime** is identified by a string like `conversation-42-runtime`.
+- A **threaded component** is a React component registered with `threadedComponent` (or by being a direct child of `OnRuntime`).
+- A **threaded surface** is a native view that asks a named runtime to render a registered component.
+- A **prewarmed runtime** is one that started before its UI is visible.
+- A **headless task** runs JS on a named runtime without mounting any UI.
+- A **shared store** synchronizes state across runtimes through native C++.
+
+<Callout type="info" title="Tip">
+  Pick runtime names per **logical owner**, not per screen mount. One runtime
+  per conversation, one per feed type, one `background` for app-lifetime work.
+  Stable names let you prewarm, hydrate, and reuse them.
+</Callout>
+
+## When to reach for it
+
+Use a threaded runtime when **the main JS runtime should stay responsive while
+another runtime owns part of the UI** — chat, feeds, document parsing, big
+lists, animation-heavy screens.
+
+Use the [shared store](/docs/shared-state/overview) when data is **too large,
+mutable, or frequently changing** to pass as JSON props through the threaded
+boundary.
+
+Use a [background runtime](/docs/threaded-runtime/business-logic-executor) for
+app-lifetime work that has no UI — sync engines, caches, queues, crypto, local
+search indexing.

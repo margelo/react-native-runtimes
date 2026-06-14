@@ -1,15 +1,23 @@
 #import "ThreadedRuntime.h"
 
 #import <React/RCTConvert.h>
+#import <React/RCTFabricSurface.h>
 #import <React/RCTLog.h>
 #import <React/RCTUtils.h>
 #import <React-RCTAppDelegate/RCTAppSetupUtils.h>
 #import <React-RCTAppDelegate/RCTReactNativeFactory.h>
 #import <ReactCommon/RCTHost.h>
+#import <react/renderer/runtimescheduler/RuntimeScheduler.h>
+#import <react/renderer/runtimescheduler/RuntimeSchedulerBinding.h>
 #import <react/runtime/JSRuntimeFactory.h>
 #import <react/runtime/JSRuntimeFactoryCAPI.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 
 #include "RuntimeFunctionJsi.h"
+
+NSString *const ThreadedRuntimeReadyNotification = @"ThreadedRuntimeReadyNotification";
+NSString *const ThreadedRuntimeReadyNotificationRuntimeNameKey = @"runtimeName";
 
 static NSString *const ThreadedRuntimeDefaultRuntimeName = @"background-list";
 static NSString *const ThreadedRuntimeDefaultBusinessRuntimeName = @"business-runtime";
@@ -25,6 +33,14 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
 
 @end
 
+// `setBundleURLProvider:` is implemented by RCTHost on all supported RN versions
+// but isn't declared in RN 0.83's public RCTHost.h. Forward-declare it so we can
+// call it explicitly after init (RN 0.83's initializer drops the provider param;
+// RN 0.85+ stores it — calling the setter is correct/harmless on both).
+@interface RCTHost (RNRBundleURLProvider)
+- (void)setBundleURLProvider:(RCTHostBundleURLProvider)bundleURLProvider;
+@end
+
 @interface ThreadedRuntimeHostDelegate : NSObject <RCTHostDelegate>
 
 - (instancetype)initWithDelegate:(id<RCTReactNativeFactoryDelegate>)delegate runtimeName:(NSString *)runtimeName;
@@ -34,10 +50,99 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
 
 @end
 
+#pragma mark - Expo modules support for secondary runtimes
+
+// objc_setAssociatedObject key: keeps each secondary runtime's Expo AppContext
+// alive for as long as its RCTHost.
+static char ThreadedRuntimeExpoAppContextKey;
+
+namespace {
+
+// Mirror of `expo::dispatchOnReactScheduler` (ExpoModulesCore's
+// EXReactSchedulerDispatch.h). ExpoModulesJSI calls this trampoline to dispatch
+// async work onto this runtime's JS thread. Defined here (identical signature
+// and behavior) so this pod has no compile-time dependency on ExpoModulesCore —
+// Expo documents that "hosts that initialize their own runtime pass a pointer
+// to this function as the `dispatch` argument of AppContext.setRuntime".
+void ThreadedRuntimeDispatchOnReactScheduler(void *nativeScheduler, int priority, void (^callback)()) noexcept
+{
+  auto *scheduler = static_cast<facebook::react::RuntimeScheduler *>(nativeScheduler);
+  scheduler->scheduleTask(
+      static_cast<facebook::react::SchedulerPriority>(priority),
+      [callback](facebook::jsi::Runtime &) { callback(); });
+}
+
+} // namespace
+
+// Installs Expo modules (`global.expo` + `expo.modules.*`) into a secondary
+// runtime by creating a dedicated EXAppContext for its host — the same setup
+// ExpoReactNativeFactory performs for the MAIN runtime in
+// `host:didInitializeRuntime:` (expo/ios/AppDelegates/ExpoReactNativeFactory.mm).
+// Without this, Expo's JSI host only exists on the main runtime and any Expo
+// module used from a threaded runtime is a no-op stub.
+//
+// Done reflectively (NSClassFromString + objc_msgSend) so there is no
+// compile-time dependency on ExpoModulesCore; in bare React Native apps the
+// EXAppContext class doesn't exist and this is a no-op.
+static void ThreadedRuntimeInstallExpoAppContext(RCTHost *host, facebook::jsi::Runtime &runtime)
+{
+  Class appContextClass = NSClassFromString(@"EXAppContext");
+  if (appContextClass == nil) {
+    return; // Not an Expo app.
+  }
+  if (objc_getAssociatedObject(host, &ThreadedRuntimeExpoAppContextKey) != nil) {
+    return; // Already installed for this host.
+  }
+
+  SEL setRuntimeSel = NSSelectorFromString(@"setRuntime:scheduler:dispatch:");
+  SEL registerModulesSel = NSSelectorFromString(@"registerNativeModules");
+  id appContext = [[appContextClass alloc] init];
+  if (![appContext respondsToSelector:setRuntimeSel] || ![appContext respondsToSelector:registerModulesSel]) {
+    RCTLogWarn(
+        @"[ThreadedRuntime] EXAppContext exists but its API is not the expected one; "
+        @"Expo modules won't be available on secondary runtimes");
+    return;
+  }
+
+  // Resolve this runtime's React scheduler — exactly like ExpoReactNativeFactory —
+  // so ExpoModulesJSI can dispatch async work back onto this runtime's JS thread.
+  // If the binding is missing, pass nullptr for both: AppContext falls back to a
+  // synchronous scheduler.
+  auto binding = facebook::react::RuntimeSchedulerBinding::getBinding(runtime);
+  auto scheduler = binding ? binding->getRuntimeScheduler() : nullptr;
+
+  using SetRuntimeFn = void (*)(id, SEL, void *, void *, const void *);
+  ((SetRuntimeFn)objc_msgSend)(
+      appContext,
+      setRuntimeSel,
+      (void *)&runtime,
+      scheduler ? (void *)scheduler.get() : nullptr,
+      scheduler ? (const void *)&ThreadedRuntimeDispatchOnReactScheduler : nullptr);
+
+  // Hand the host to the AppContext (module/view lookups go through it).
+  Class hostWrapperClass = NSClassFromString(@"EXHostWrapper");
+  SEL initWithHostSel = NSSelectorFromString(@"initWithHost:");
+  SEL setHostWrapperSel = NSSelectorFromString(@"setHostWrapper:");
+  if (hostWrapperClass != nil && [appContext respondsToSelector:setHostWrapperSel]) {
+    id wrapper = ((id (*)(id, SEL, RCTHost *))objc_msgSend)([hostWrapperClass alloc], initWithHostSel, host);
+    if (wrapper != nil) {
+      ((void (*)(id, SEL, id))objc_msgSend)(appContext, setHostWrapperSel, wrapper);
+    }
+  }
+
+  // Registers the Expo module definitions; setRuntime above already installed
+  // `global.expo` (AppContext.prepareRuntime runs on runtime assignment).
+  ((void (*)(id, SEL))objc_msgSend)(appContext, registerModulesSel);
+
+  objc_setAssociatedObject(host, &ThreadedRuntimeExpoAppContextKey, appContext, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  RCTLogInfo(@"[ThreadedRuntime] Installed Expo AppContext on secondary runtime");
+}
+
 @implementation ThreadedRuntimeHostDelegate {
   __weak id<RCTReactNativeFactoryDelegate> _delegate;
   NSString *_runtimeName;
   NSString *_kind;
+  BOOL _didInitializeRuntime;
 }
 
 - (instancetype)initWithDelegate:(id<RCTReactNativeFactoryDelegate>)delegate runtimeName:(NSString *)runtimeName
@@ -77,6 +182,13 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
 
 - (void)host:(RCTHost *)host didInitializeRuntime:(facebook::jsi::Runtime &)runtime
 {
+  // Idempotency guard: on RN 0.85+ this object is set as BOTH hostDelegate and
+  // runtimeDelegate, so RCTHost invokes this twice. Run setup once.
+  if (_didInitializeRuntime) {
+    return;
+  }
+  _didInitializeRuntime = YES;
+
   auto global = runtime.global();
 
   auto threadedEnv = facebook::jsi::Object(runtime);
@@ -87,8 +199,12 @@ static NSString *const ThreadedRuntimeFunctionRunnerModule = @"ThreadedRuntimeFu
   nativecompose::threadedruntime::installRuntimeFunctionJsi(runtime, [_runtimeName UTF8String]);
 
   if ([_delegate respondsToSelector:@selector(host:didInitializeRuntime:)]) {
-    [_delegate host:host didInitializeRuntime:runtime];
+    [(id<RCTHostRuntimeDelegate>)_delegate host:host didInitializeRuntime:runtime];
   }
+
+  // In Expo apps, give this secondary runtime a real `global.expo` (its own
+  // EXAppContext) so Expo modules work here too — not just on the main runtime.
+  ThreadedRuntimeInstallExpoAppContext(host, runtime);
 }
 
 @end
@@ -221,6 +337,16 @@ static NSMutableDictionary<NSString *, NSMutableArray<NSDictionary<NSString *, N
   return calls;
 }
 
+static NSMutableDictionary<NSString *, NSMutableArray<RCTFabricSurface *> *> *ThreadedRuntimePendingSurfaces()
+{
+  static NSMutableDictionary<NSString *, NSMutableArray<RCTFabricSurface *> *> *surfaces;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    surfaces = [NSMutableDictionary new];
+  });
+  return surfaces;
+}
+
 static NSMutableDictionary<NSString *, RCTPromiseResolveBlock> *ThreadedRuntimeFunctionResolves()
 {
   static NSMutableDictionary<NSString *, RCTPromiseResolveBlock> *resolves;
@@ -252,6 +378,16 @@ static NSMutableSet<NSString *> *ThreadedRuntimeStartingRuntimeNames()
 }
 
 static NSMutableSet<NSString *> *ThreadedRuntimeStartedRuntimeNames()
+{
+  static NSMutableSet<NSString *> *runtimeNames;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    runtimeNames = [NSMutableSet new];
+  });
+  return runtimeNames;
+}
+
+static NSMutableSet<NSString *> *ThreadedRuntimeBundleLoadedRuntimeNames()
 {
   static NSMutableSet<NSString *> *runtimeNames;
   static dispatch_once_t onceToken;
@@ -439,8 +575,10 @@ static NSDictionary *configuredLaunchOptions;
   @synchronized(self) {
     [ThreadedRuntimePendingHeadlessTasks() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimePendingFunctionCalls() removeObjectForKey:normalizedRuntimeName];
+    [ThreadedRuntimePendingSurfaces() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimeStartingRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeStartedRuntimeNames() removeObject:normalizedRuntimeName];
+    [ThreadedRuntimeBundleLoadedRuntimeNames() removeObject:normalizedRuntimeName];
   }
   [ThreadedRuntimeHosts() removeObjectForKey:normalizedRuntimeName];
   [ThreadedRuntimeHostDelegates() removeObjectForKey:normalizedRuntimeName];
@@ -459,8 +597,10 @@ static NSDictionary *configuredLaunchOptions;
   @synchronized(self) {
     [ThreadedRuntimePendingHeadlessTasks() removeAllObjects];
     [ThreadedRuntimePendingFunctionCalls() removeAllObjects];
+    [ThreadedRuntimePendingSurfaces() removeAllObjects];
     [ThreadedRuntimeStartingRuntimeNames() removeAllObjects];
     [ThreadedRuntimeStartedRuntimeNames() removeAllObjects];
+    [ThreadedRuntimeBundleLoadedRuntimeNames() removeAllObjects];
   }
   NSLog(@"[ThreadedRuntime] runtime destroyAll");
   RCTLogInfo(@"[ThreadedRuntime] runtime destroyAll");
@@ -481,7 +621,33 @@ static NSDictionary *configuredLaunchOptions;
   NSString *normalizedAppName = appName.length > 0 ? appName : ThreadedRuntimeDefaultHostAppName;
   RCTHost *host = [self ensureHostWithRuntimeName:normalizedRuntimeName];
   [self startRuntimeAndFlushWithRuntimeName:normalizedRuntimeName host:host];
-  return [host createSurfaceWithModuleName:normalizedAppName initialProperties:properties ?: @{}];
+  RCTFabricSurface *surface =
+      [[RCTFabricSurface alloc] initWithSurfacePresenter:host.surfacePresenter
+                                              moduleName:normalizedAppName
+                                       initialProperties:properties ?: @{}];
+
+  BOOL startNow = NO;
+  @synchronized(self) {
+    if ([ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:normalizedRuntimeName]) {
+      startNow = YES;
+    } else {
+      NSMutableArray<RCTFabricSurface *> *pending =
+          ThreadedRuntimePendingSurfaces()[normalizedRuntimeName];
+      if (pending == nil) {
+        pending = [NSMutableArray new];
+        ThreadedRuntimePendingSurfaces()[normalizedRuntimeName] = pending;
+      }
+      [pending addObject:surface];
+    }
+  }
+
+  if (startNow) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [surface start];
+    });
+  }
+
+  return surface;
 }
 
 + (void)startRuntimeAndFlushWithRuntimeName:(NSString *)runtimeName host:(RCTHost *)host
@@ -529,6 +695,62 @@ static NSDictionary *configuredLaunchOptions;
   }
   [self flushHeadlessTasksWithRuntimeName:normalizedRuntimeName host:host];
   [self flushRuntimeFunctionCallsWithRuntimeName:normalizedRuntimeName host:host];
+}
+
++ (void)notifyRuntimeReadyWithRuntimeName:(NSString *)runtimeName
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  BOOL alreadyReady = NO;
+  @synchronized(self) {
+    alreadyReady = [ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:normalizedRuntimeName];
+    if (!alreadyReady) {
+      [ThreadedRuntimeBundleLoadedRuntimeNames() addObject:normalizedRuntimeName];
+    }
+  }
+  if (alreadyReady) {
+    return;
+  }
+  [self flushPendingSurfacesWithRuntimeName:normalizedRuntimeName];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:ThreadedRuntimeReadyNotification
+                      object:nil
+                    userInfo:@{ThreadedRuntimeReadyNotificationRuntimeNameKey : normalizedRuntimeName}];
+  });
+}
+
++ (BOOL)isRuntimeReadyForSurfaces:(NSString *)runtimeName
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  @synchronized(self) {
+    return [ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:normalizedRuntimeName];
+  }
+}
+
++ (void)ensureRuntimeStarted:(NSString *)runtimeName
+{
+  NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  [self configureRuntimeKind:[self runtimeKindForRuntimeName:normalizedRuntimeName]
+                 runtimeName:normalizedRuntimeName];
+  dispatch_async(ThreadedRuntimeQueue(), ^{
+    RCTHost *host = [self ensureHostWithRuntimeName:normalizedRuntimeName];
+    [self startRuntimeAndFlushWithRuntimeName:normalizedRuntimeName host:host];
+  });
+}
+
++ (void)flushPendingSurfacesWithRuntimeName:(NSString *)runtimeName
+{
+  NSArray<RCTFabricSurface *> *surfaces;
+  @synchronized(self) {
+    surfaces = [ThreadedRuntimePendingSurfaces()[runtimeName] copy];
+    [ThreadedRuntimePendingSurfaces() removeObjectForKey:runtimeName];
+  }
+
+  for (RCTFabricSurface *surface in surfaces) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      [surface start];
+    });
+  }
 }
 
 + (void)flushHeadlessTasksWithRuntimeName:(NSString *)runtimeName host:(RCTHost *)host
@@ -606,9 +828,28 @@ static NSDictionary *configuredLaunchOptions;
   ThreadedRuntimeTurboModuleDelegate *turboModuleDelegate =
       [[ThreadedRuntimeTurboModuleDelegate alloc] initWithDelegate:delegate];
   __weak id<RCTReactNativeFactoryDelegate> weakDelegate = delegate;
-  RCTHost *host = [[RCTHost alloc] initWithBundleURLProvider:^NSURL *_Nullable {
-    return [weakDelegate bundleURL];
-  }
+  RCTHostBundleURLProvider bundleURLProvider = ^NSURL *_Nullable {
+    NSURL *url = [weakDelegate bundleURL];
+    if (url != nil) {
+      return url;
+    }
+    Class devLauncherClass = NSClassFromString(@"EXDevLauncherController");
+    if (devLauncherClass != nil) {
+      SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+      SEL sourceUrlSel = NSSelectorFromString(@"sourceUrl");
+      if ([devLauncherClass respondsToSelector:sharedSel]) {
+        id controller = ((id (*)(id, SEL))objc_msgSend)(devLauncherClass, sharedSel);
+        if ([controller respondsToSelector:sourceUrlSel]) {
+          NSURL *devLauncherURL = ((NSURL *(*)(id, SEL))objc_msgSend)(controller, sourceUrlSel);
+          if (devLauncherURL != nil) {
+            return devLauncherURL;
+          }
+        }
+      }
+    }
+    return url; // nil — preserve original behavior for non-dev-client setups.
+  };
+  RCTHost *host = [[RCTHost alloc] initWithBundleURLProvider:bundleURLProvider
                                       hostDelegate:hostDelegate
                         turboModuleManagerDelegate:turboModuleDelegate
                                   jsEngineProvider:^std::shared_ptr<facebook::react::JSRuntimeFactory>() {
@@ -618,6 +859,17 @@ static NSDictionary *configuredLaunchOptions;
                                         &js_runtime_factory_destroy);
                                   }
                                      launchOptions:configuredLaunchOptions];
+  // RN 0.83's RCTHost initializer drops the bundle URL provider (only RN 0.85+
+  // stores it in init), so set it explicitly — otherwise the secondary runtime
+  // loads with a nil bundle URL ("No script URL provided").
+  [host setBundleURLProvider:bundleURLProvider];
+  // RN 0.83 dispatches `host:didInitializeRuntime:` ONLY to runtimeDelegate
+  // (RN 0.85+ also calls it on hostDelegate). That callback sets
+  // __THREADED_RUNTIME_ENV__, which the index gate needs to load the threaded
+  // entry (and register ThreadedRuntimeFunctionRunner). The hostDelegate already
+  // implements it; reuse it as runtimeDelegate (the _didInitializeRuntime guard
+  // makes the resulting double-call on RN 0.85 a no-op).
+  host.runtimeDelegate = (id<RCTHostRuntimeDelegate>)hostDelegate;
 
   @synchronized(self) {
     RCTHost *existingHost = ThreadedRuntimeHosts()[runtimeName];
@@ -755,6 +1007,15 @@ RCT_EXPORT_METHOD(completeRuntimeFunctionCall
   [ThreadedRuntime completeRuntimeFunctionCallWithCallId:callId
                                              resultJson:resultJson
                                               errorJson:errorJson];
+  resolve(nil);
+}
+
+RCT_EXPORT_METHOD(notifyRuntimeReady
+                  : (NSString *)runtimeName resolver
+                  : (RCTPromiseResolveBlock)resolve rejecter
+                  : (RCTPromiseRejectBlock)reject)
+{
+  [ThreadedRuntime notifyRuntimeReadyWithRuntimeName:runtimeName];
   resolve(nil);
 }
 

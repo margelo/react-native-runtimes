@@ -97,6 +97,30 @@ committed to the process-wide singleton.
 - Persisted subtrees are stored as native JSON files and restored during
   hydration before initial state is used.
 
+## Expo
+
+This package does **not** ship its own config plugin. Register it by npm name
+through the `packages` option of `@react-native-runtimes/core` — core reads the
+`reactNativeRuntimes` metadata declared in this package's `package.json` and
+adds `ThreadedZustandPackage` to the secondary runtime's package list:
+
+```ts
+// app.config.ts
+export default {
+  newArchEnabled: true,
+  plugins: [
+    ['@react-native-runtimes/core', {
+      packages: ['@react-native-runtimes/state'],
+    }],
+  ],
+};
+```
+
+On iOS no additional setup is needed — the Podspec and NitroModules autolinking
+handle everything automatically.
+
+The package does **not** require Expo at runtime.
+
 ## Setup
 
 Install the package and let React Native autolink it:

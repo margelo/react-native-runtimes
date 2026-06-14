@@ -1,0 +1,74 @@
+---
+title: Concurrency and revisions
+description: How concurrent writes behave, what revisions are for, and how subscriptions fan out across related paths.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Each path has a native state payload and a revision. Revisions are integers
+that increment whenever the payload changes:
+
+```tsx
+const messages = chatStore.path<Message[]>('conversations.release-room');
+
+await messages.hydrate();
+console.log(messages.getRevision());
+```
+
+## Notification fan-out
+
+Subscribers are invalidated for related paths. A subscriber on
+`conversations` will be notified when `conversations.release-room` changes,
+and a subscriber on `conversations.release-room` will be notified when
+`conversations` changes.
+
+That makes broad subscriptions ("anything under conversations changed") cheap
+to express, and narrow subscriptions ("messages of one conversation") still
+update when a parent path is replaced.
+
+## Concurrent writers
+
+Individual reads and writes against the C++ store are thread-safe, but there
+is **no cross-runtime read-modify-write atomicity** — writes are
+last-writer-wins. `update(...)` computes the next value from this runtime's
+local copy, so it has the same race as a read-then-`set`:
+
+```tsx
+// Both forms race if another runtime writes between the read and the write.
+const current = messages.get();
+await messages.set([...current, newMessage], true);
+
+await messages.update(current => [...(current ?? []), newMessage]);
+```
+
+Design around the race instead of trying to win it:
+
+- **One writer per path.** Give each path a single owning runtime; everyone
+  else reads and subscribes.
+- **Funnel writes through the owner.** If another runtime needs to mutate a
+  path, send the request to the owning runtime as a
+  [runtime function](/docs/threaded-runtime/scheduling-functions) or
+  [headless task](/docs/threaded-runtime/headless-runtime) and let it write.
+- **Split contended paths.** If two runtimes genuinely produce different data,
+  give each its own path and merge on read.
+
+## Revisions
+
+Revisions exist so a runtime can tell whether its copy of a path is stale.
+Change events carry the revision; a runtime ignores events older than what it
+has already seen. Revisions are per-session — they reset when the app
+restarts.
+
+## Reducers via slices
+
+If a store needs a richer write path (typed actions, slice reducers), use the
+`slices` option on `createSharedStore`. See
+[Background thread architecture](/docs/threaded-runtime/business-logic-executor#shared-zustand-store)
+for a fully wired example with actions, slices, and persistence.
+
+## Mental model
+
+- **Path** = key in the native C++ store (each path is its own flat entry)
+- **Revision** = integer that increments on each write, used to discard stale change events
+- **Subscriber** = a JS listener tied to a path; it fires when the path or any related path changes
+- **Writes** = individually thread-safe, last-writer-wins; no cross-runtime transactions

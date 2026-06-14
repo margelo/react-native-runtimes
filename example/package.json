@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@legendapp/list": "^2.0.19",
-    "@react-native-runtimes/core": "workspace:*",
-    "@react-native-runtimes/state": "workspace:*",
+    "@react-native-runtimes/core": "../packages/core",
+    "@react-native-runtimes/state": "../packages/state",
     "@react-native/new-app-screen": "0.86.0-rc.0",
     "@shopify/flash-list": "^2.3.1",
     "react": "19.2.3",

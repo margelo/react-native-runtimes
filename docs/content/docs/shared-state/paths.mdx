@@ -1,0 +1,89 @@
+---
+title: Paths
+description: Path handles are the unit of read, write, and subscription. This page describes the full API.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+A **path handle** is the unit of read, write, and subscription against the
+shared store. Each handle targets one key in the native C++ store; two
+handles to the same key see the same value and the same revision.
+
+## Creating handles
+
+```tsx
+const draft = chatStore.path<string>('drafts.release-room');
+const messages = chatStore.path<Message[]>(['conversations', conversationId]);
+```
+
+A path can be:
+
+- a **dot string** like `'drafts.release-room'`
+- an **array of segments** like `['conversations', conversationId]`
+
+Both forms reach the same native location.
+
+## Reading
+
+```tsx
+const messages = conversationMessages(conversationId);
+
+// Hook (subscribes and re-renders on change)
+const value = messages.use();
+
+// One-shot read (no subscription)
+const current = messages.get();
+
+// Async hydrate (loads from persistence if needed)
+await messages.hydrate();
+```
+
+`use()` accepts a selector:
+
+```tsx
+const count = messages.use(list => list?.length ?? 0);
+```
+
+The hook handles subscription cleanup. Subscriptions also fan out to **parent
+paths** — see [Concurrency and revisions](/docs/shared-state/locking-and-revisions).
+
+## Writing
+
+```tsx
+await messages.set(nextList, true);
+await messages.update(current => [...(current ?? []), newMessage]);
+```
+
+| Method | What it does | When to use |
+| --- | --- | --- |
+| `set(value)` or `set((current) => nextValue)` | Shallow-merges plain objects; arrays, null, and other non-plain-object values are replaced entirely | Partial updates or computed updates |
+| `set(value, true)` | Replaces the value at this path | When the new value is complete |
+| `update(fn)` | Computes the next value from the runtime's current copy and replaces it | When the new value depends on the current one |
+
+<Callout type="warn" title="Writes are last-writer-wins">
+  `update` reads this runtime's local copy of the value — it is **not** an
+  atomic cross-runtime read-modify-write. If two runtimes write the same path
+  concurrently, the last write wins. Keep one writing runtime per path; other
+  runtimes read and subscribe.
+</Callout>
+
+## Revisions
+
+Every path has a monotonically increasing revision number:
+
+```tsx
+await messages.hydrate();
+console.log(messages.getRevision()); // e.g. 17
+```
+
+Use the revision to detect whether a value has actually changed since you
+last looked, even when the value happens to deep-equal the previous one.
+
+## Listing the surface
+
+A store can pre-declare subtrees so they're hydrated eagerly. Anything not
+declared can still be reached via `store.path(...)` — it hydrates lazily on
+first access or when you call `path.hydrate()`.
+
+See [Persistence](/docs/shared-state/persistence) for the persisted-state
+counterpart.

@@ -2028,6 +2028,8 @@ function ThreadedChatScreenContent({
       Array.from({ length: itemCount }, (_, index) => source.renderItem(index))
         .filter(item => item != null)
         .reverse(),
+    // `source` is mutable; `dataVersion` is bumped to signal rows must be recomputed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [dataVersion, itemCount, source],
   );
 

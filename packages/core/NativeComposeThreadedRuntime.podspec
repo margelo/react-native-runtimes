@@ -37,4 +37,11 @@ Pod::Spec.new do |s|
 
   install_modules_dependencies(s)
   s.dependency "React-RCTAppDelegate"
+  # NOTE: RuntimeScheduler/RuntimeSchedulerBinding headers (used to give Expo's
+  # AppContext a JS-thread dispatcher on secondary runtimes) resolve through
+  # React-RCTAppDelegate's transitive dependency on React-runtimescheduler.
+  # Do NOT declare a direct `React-runtimescheduler` dependency here: this pod
+  # contains Swift, and on RN 0.83 React-runtimescheduler doesn't define a
+  # module, so CocoaPods rejects it ("Swift pod ... depends upon
+  # React-runtimescheduler, which does not define modules").
 end
