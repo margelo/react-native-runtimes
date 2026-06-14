@@ -17,9 +17,9 @@ These libraries run a function on a worklet thread that **shares JSI memory** wi
 | Worklets-core pattern | react-native-runtimes equivalent |
 | --- | --- |
 | `Worklets.createRunOnJS(fn)` / `runOnJS(fn)` | `runtimeFunction(fn)` + `call(fn).on('main')(...)` from the background runtime, *or* a `'main'` function directive |
-| `useWorklet(fn)` / `Worklets.createRunInContextFn(fn)` | Either: a `'background'` function directive (function bound to one runtime), `call(fn).on('background')(...)` (caller picks runtime), `runHeadlessTask` (fire-and-forget, no return value), or `OnRuntime` (whole component on another runtime). Closures don't carry — convert captured vars to function arguments or shared store values. |
+| `useWorklet(fn)` / `Worklets.createRunInContextFn(fn)` | Either: a `'background'` function directive (function bound to one runtime), `call(fn).on('background')(...)` (caller picks runtime), `schedule(fn).on('background')(...)` (fire-and-forget, no return value), or `OnRuntime` (whole component on another runtime). Closures don't carry — convert captured vars to function arguments or shared store values. |
 | Shared values (`useSharedValue`, `runOnUI` mutations) | `createSharedStore({...}).path('key')` — explicit JSON, native-backed. No synchronous SharedValue-style mutation from the UI thread; use `path.use()` in React, `path.get()` outside it. |
-| `react-native-multithreading` `spawnThread(() => ...)` | A `runtimeFunction` on a named worker runtime, or a headless task if the caller doesn't need a return value. **Don't spin up a runtime per task** — prewarm one named worker and reuse it. |
+| `react-native-multithreading` `spawnThread(() => ...)` | A `runtimeFunction` on a named worker runtime — `call(...)` when the caller needs the result, or `schedule(...)` if it doesn't. **Don't spin up a runtime per call** — prewarm one named worker and reuse it. |
 | Worklet-only native bindings (e.g. mmkv worklet bindings) | Use the regular module — threaded runtimes are full RN runtimes. On Android, add the module's package to `setExtraReactPackagesProvider` (autolinking only wires the main runtime). |
 | Frame callbacks / `runOnUI` for animation | **Stay on worklets.** This library is for screen-scoped or app-lifetime work, not per-frame animation. Don't migrate animation loops. |
 
@@ -146,7 +146,7 @@ When migrating, expect to handle these explicitly:
 ### Checklist when migrating a worklet
 
 1. Identify what the worklet reads from module scope. Convert each capture to a function argument or move it into `createSharedStore`.
-2. Pick the shape: `'background'` directive (function bound to a runtime), `call(fn).on(name)(...)` (caller picks runtime), or `runHeadlessTask` (fire-and-forget).
+2. Pick the shape: `'background'` directive (function bound to a runtime), `call(fn).on(name)(...)` (caller picks runtime), or `schedule(fn).on(name)(...)` (fire-and-forget).
 3. Replace `runOnJS` calls: return the value, or write to a shared path the main runtime subscribes to.
 4. Wire up the named worker runtime: install Metro wrapper, gate `index.js`, configure iOS, install Android packages, optionally prewarm at startup.
 5. Verify `runOnJS`-style mid-execution updates either become shared-store writes or `'main'` directive calls.

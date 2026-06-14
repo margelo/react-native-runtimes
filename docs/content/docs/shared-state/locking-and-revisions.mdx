@@ -48,7 +48,7 @@ Design around the race instead of trying to win it:
 - **Funnel writes through the owner.** If another runtime needs to mutate a
   path, send the request to the owning runtime as a
   [runtime function](/docs/threaded-runtime/scheduling-functions) or
-  [headless task](/docs/threaded-runtime/headless-runtime) and let it write.
+  [scheduled function](/docs/threaded-runtime/headless-runtime) and let it write.
 - **Split contended paths.** If two runtimes genuinely produce different data,
   give each its own path and merge on read.
 

@@ -58,7 +58,7 @@ if (global.__THREADED_RUNTIME_ENV__) {
 }
 ```
 
-Either `global.__THREADED_RUNTIME_ENV__` or the legacy alias `global._is_it_a_list_env === true` is a reliable "I'm in a threaded runtime" check. Inside a threaded runtime, `global.__THREADED_RUNTIME_ENV__` is an object: `{ kind: string, runtimeName: string }`.
+Use `isMainRuntime()` (or `getCurrentRuntime()`) from `@react-native-runtimes/core` as the canonical "am I in a threaded runtime?" check. The underlying `global.__THREADED_RUNTIME_ENV__` object is also set inside threaded runtimes: `{ kind: string, runtimeName: string }`.
 
 ## 4. iOS — `AppDelegate.swift`
 

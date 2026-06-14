@@ -74,16 +74,16 @@ Use this file for module-scope work that must exist before native queues are
 flushed:
 
 ```tsx title="index.background.ts"
-import { registerThreadedHeadlessTask } from '@react-native-runtimes/core';
+import { runtimeFunction } from '@react-native-runtimes/core';
 import { business } from './src/businessStore';
 
-registerThreadedHeadlessTask<{ reason: string }>(
+export const refreshBusiness = runtimeFunction.named(
   'business:refresh',
-  async ({ payload }) => {
+  async ({ reason }: { reason: string }) => {
     await business.hydrate();
     await business.update(state => ({
       ...state,
-      lastRefreshReason: payload.reason,
+      lastRefreshReason: reason,
       refreshCount: state.refreshCount + 1,
     }));
   },
@@ -94,7 +94,7 @@ void business.hydrate();
 
 <Callout type="warn" title="Keep UI imports out of index.background.ts">
   Treat the bootstrap file as the background runtime's process: register
-  headless tasks, hydrate stores, start app-lifetime queues, and install
+  runtime functions, hydrate stores, start app-lifetime queues, and install
   background-only listeners. Don't import React components from it.
 </Callout>
 
@@ -248,7 +248,7 @@ work:
 Directive functions must be declared at module scope so Metro can rewrite and
 register them before calls are made.
 
-Use `ThreadedRuntime.runHeadlessTask(...)` only for native fire-and-forget
-jobs that must be queued before JavaScript has a convenient caller. For
-normal JS request/response work, prefer the function directive or
-`call(fn).on(runtimeName)(...args)`.
+Use `schedule(fn).on(runtimeName)(...args)` for fire-and-forget jobs that
+report progress through shared state — including native callers that must
+queue work before JavaScript has a convenient caller. For request/response
+work, prefer the function directive or `call(fn).on(runtimeName)(...args)`.

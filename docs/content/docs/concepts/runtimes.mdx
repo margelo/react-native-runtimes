@@ -58,7 +58,7 @@ A runtime can be implicitly started by any of these:
 
 - Mounting `<OnRuntime name="...">`
 - Mounting `<ThreadedScreen runtimeName="..." />` (auto-prewarms)
-- Calling `ThreadedRuntime.runHeadlessTask` with that runtime name
+- Scheduling work with `schedule(fn).on('...')(...)`
 - Calling `call(fn).on('...')(...)`
 
 ## Cost
