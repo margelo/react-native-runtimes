@@ -40,11 +40,11 @@ hook, or [native startup](/docs/threaded-runtime/prewarming#native-prewarm).
 - Is the runtime name a stable string? A new name every render = a new runtime per mount.
 - Is the threaded entry file generated (`.threaded-runtime/entry.js` exists after a Metro run)?
 
-## A headless task never runs
+## A scheduled runtime function never runs
 
-- Confirm `registerThreadedHeadlessTask('name', ...)` is loaded inside the threaded bundle (i.e. it's reachable from a Metro root, or registered in `index.<runtime>.ts`).
-- The task name must match exactly between `register` and `dispatch`/`runHeadlessTask`.
-- The promise returned by `runHeadlessTask` resolves on dispatch, not on completion — observe progress through shared state.
+- Confirm the `runtimeFunction(...)` is exported and loaded inside the threaded bundle (i.e. it's reachable from a Metro root, or registered in `index.<runtime>.ts`).
+- The function id must match exactly between the registration and the native `schedule(...)` / `call(...)` caller.
+- The promise returned by `schedule(...)` resolves on dispatch, not on completion — observe progress through shared state.
 
 ## Two runtimes overwrite each other's writes
 

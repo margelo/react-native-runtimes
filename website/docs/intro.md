@@ -6,7 +6,7 @@ slug: /
 
 Native Compose Runtimes provides two React Native libraries:
 
-- `@react-native-runtimes/core` mounts selected React components, whole screens, or headless tasks on named secondary React Native runtimes.
+- `@react-native-runtimes/core` mounts selected React components, whole screens, and scheduled runtime functions on named secondary React Native runtimes.
 - `@react-native-runtimes/state` provides a small Zustand-like shared store backed by native C++ state so multiple runtimes can read and update the same data.
 
 The main use cases are chat screens, expensive list renderers, background preparation, and shared state that must survive across runtime boundaries.
@@ -19,5 +19,5 @@ Use threaded rendering when the main JS runtime should stay responsive while ano
 - A threaded component is a React component registered with `threadedComponent`.
 - A threaded surface is a native view that asks the named runtime to render a registered component.
 - A prewarmed runtime is started before it is visible.
-- A headless task runs JS on a named runtime without mounting UI.
+- A scheduled runtime function runs JS on a named runtime without mounting UI or returning a value to the caller.
 - Shared Zustand stores synchronize state between the main runtime and secondary runtimes.

@@ -42,7 +42,7 @@ React Native gives your product one main JavaScript runtime. When a feed, chat s
 **react-native-runtimes** adds a multi-runtime layer for React Native New Architecture apps:
 
 - mount selected React components in named secondary Hermes runtimes
-- run whole screens, headless tasks, and typed functions away from the main runtime
+- run whole screens, background work, and typed functions away from the main runtime
 - share state across isolated JS heaps through a native C++ singleton
 - prewarm runtimes before navigation so expensive surfaces are ready when users arrive
 - wire it through Metro and, for Expo, a config plugin instead of hand-written runtime plumbing
@@ -63,7 +63,7 @@ React Native gives your product one main JavaScript runtime. When a feed, chat s
 | A chat, feed, or inbox that janks on mount | The expensive list or route surface | Navigation, gestures, and input |
 | Reducers or stores competing with animation | Business logic in a long-lived runtime | Frame-critical UI work |
 | Slow first-open screens | A prewarmed runtime before the user taps | Predictable navigation latency |
-| Background hydration or decoding | Headless tasks on a worker runtime | Responsive startup and render |
+| Background hydration or decoding | Scheduled runtime functions on a worker runtime | Responsive startup and render |
 | State that must be visible everywhere | Native-backed shared stores | Synchronous reads without bridge round-trips |
 
 ---
@@ -87,7 +87,7 @@ React Native gives your product one main JavaScript runtime. When a feed, chat s
 
 | Package | Description |
 |---|---|
-| [`@react-native-runtimes/core`](packages/core/README.md) | Mount React components in secondary runtimes. Metro transform, `OnRuntime`, `ThreadedScreen`, headless tasks, cross-runtime function calls. |
+| [`@react-native-runtimes/core`](packages/core/README.md) | Mount React components in secondary runtimes. Metro transform, `OnRuntime`, `ThreadedScreen`, scheduled functions, cross-runtime function calls. |
 | [`@react-native-runtimes/state`](packages/state/README.md) | Zustand-style shared store backed by a process-wide C++ singleton. Synchronous reads and commits from every runtime. |
 
 ---
@@ -137,21 +137,24 @@ import { ThreadedRuntime } from '@react-native-runtimes/core';
 await ThreadedRuntime.prewarm(`chat-${conversationId}`);
 ```
 
-### 🏃 Headless tasks
+### 🏃 Background work
 
-Run JS on a named runtime without mounting a view — perfect for pre-hydrating stores, decoding data, or running reducers in a long-lived worker:
+Run JS on a named runtime without mounting a view — perfect for pre-hydrating stores, decoding data, or running reducers in a long-lived worker. Register a `runtimeFunction` and fire it with `schedule` (fire-and-forget):
 
 ```tsx
 // Register on the threaded bundle side:
-registerThreadedHeadlessTask('hydrateConversation', async ({ payload }) => {
-  const messages = await loadMessages(payload.conversationId, payload.limit);
-  await messagesStore.setSubtreeState(payload.conversationId, messages, true);
-});
+export const hydrateConversation = runtimeFunction.named(
+  'hydrateConversation',
+  async ({ conversationId, limit }) => {
+    const messages = await loadMessages(conversationId, limit);
+    await messagesStore.setSubtreeState(conversationId, messages, true);
+  },
+);
 
-// Dispatch from anywhere:
-await ThreadedRuntime.runHeadlessTask('hydrateConversation', {
-  runtimeName: 'chat-worker-runtime',
-  payload: { conversationId, limit: 50 },
+// Schedule from anywhere:
+await schedule(hydrateConversation).on('chat-worker-runtime')({
+  conversationId,
+  limit: 50,
 });
 ```
 

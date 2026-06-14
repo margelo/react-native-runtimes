@@ -9,7 +9,7 @@ Use a runtime function when the caller should await a result from another JS
 runtime:
 
 ```tsx
-import { call, runtimeFunction } from '@react-native-runtimes/core';
+import { call, runtimeFunction } from "@react-native-runtimes/core";
 
 function fibonacciNumber(n: number): number {
   if (n < 2) {
@@ -27,7 +27,7 @@ export const fibonacci = runtimeFunction((n: number) => {
   };
 });
 
-const result = await call(fibonacci).on('fibonacci-worker-runtime')(38);
+const result = await call(fibonacci).on("fibonacci-worker-runtime")(38);
 ```
 
 The sample app includes this as the **Fibonacci** screen. It is the smallest
@@ -43,16 +43,16 @@ inside the threaded runtime:
 function MessageList({ conversationId }: { conversationId: string }) {
   const messages = useDatabaseQuery(() =>
     db.messages
-      .where('conversationId')
+      .where("conversationId")
       .equals(conversationId)
-      .sortBy('createdAt'),
+      .sortBy("createdAt")
   );
 
   return (
     <LegendList
       data={messages}
       estimatedItemSize={96}
-      keyExtractor={item => item.id}
+      keyExtractor={(item) => item.id}
       renderItem={renderMessage}
     />
   );
@@ -77,12 +77,12 @@ Use the main runtime as a data producer and a threaded runtime as the consumer
 when network and UI ownership are separate:
 
 ```tsx
-const pokemonItems = pokemonStore.path<PokemonEntry[]>('pokemonItems');
+const pokemonItems = pokemonStore.path<PokemonEntry[]>("pokemonItems");
 
 async function fetchMore() {
   const page = await fetchNextPage();
 
-  await pokemonItems.update(items => [...items, ...page]);
+  await pokemonItems.update((items) => [...items, ...page]);
 }
 ```
 
@@ -108,21 +108,21 @@ Use shared Zustand paths when two runtimes should update the same logical state:
 
 ```tsx
 const sharedTreeStore = createSharedStore<SharedTreeState>({
-  name: 'threaded-tree-demo',
+  name: "threaded-tree-demo",
   initialState: {
     nodes: initialNodeColors,
     interaction: {
-      lastNode: 'root',
-      lastRuntime: 'initial',
+      lastNode: "root",
+      lastRuntime: "initial",
       presses: 0,
     },
   },
-  subtrees: ['nodes', 'interaction'],
+  subtrees: ["nodes", "interaction"],
 });
 
-const nodes = sharedTreeStore.path<SharedTreeState['nodes']>('nodes');
+const nodes = sharedTreeStore.path<SharedTreeState["nodes"]>("nodes");
 const interaction =
-  sharedTreeStore.path<SharedTreeState['interaction']>('interaction');
+  sharedTreeStore.path<SharedTreeState["interaction"]>("interaction");
 ```
 
 Both runtimes render the same tree and write through path handles:
@@ -160,7 +160,7 @@ The sample app includes this as **Shared tree**.
 
 ```tsx
 const CHAT_RUNTIME_NAMES = conversations.map(
-  conversation => `conversation-${conversation.id}-runtime`,
+  (conversation) => `conversation-${conversation.id}-runtime`
 );
 
 function ConversationPicker() {
@@ -188,7 +188,7 @@ function ConversationPicker() {
 
   return (
     <ConversationList
-      onOpen={conversationId => {
+      onOpen={(conversationId) => {
         void ThreadedRuntime.prewarm(`conversation-${conversationId}-runtime`);
         setSelectedId(conversationId);
       }}
@@ -197,22 +197,22 @@ function ConversationPicker() {
 }
 ```
 
-## Headless Hydration Before Opening A Screen
+## Scheduled Hydration Before Opening A Screen
 
 ```tsx
+import { schedule } from "@react-native-runtimes/core";
+import { hydrateConversation } from "./hydrateConversation";
+
 async function prepareAndOpen(conversationId: string) {
   const runtimeName = `conversation-${conversationId}-runtime`;
 
   await ThreadedRuntime.prewarm(runtimeName);
-  await ThreadedRuntime.runHeadlessTask('hydrateConversation', {
-    runtimeName,
-    payload: {
-      conversationId,
-      limit: 50,
-    },
+  await schedule(hydrateConversation).on(runtimeName)({
+    conversationId,
+    limit: 50,
   });
 
-  navigation.navigate('Conversation', { conversationId });
+  navigation.navigate("Conversation", { conversationId });
 }
 ```
 
@@ -222,11 +222,11 @@ This can be called before the runtime is ready. Native queues the request and
 flushes it once startup completes.
 
 ```kotlin
-ThreadedRuntime.dispatchHeadlessTask(
+ThreadedRuntime.schedule(
   applicationContext,
   "conversation-release-room-runtime",
-  "hydrateConversation",
-  """{"conversationId":"release-room","limit":50}""",
+  "messages.hydrateConversation",
+  """[{"conversationId":"release-room","limit":50}]""",
 )
 ```
 

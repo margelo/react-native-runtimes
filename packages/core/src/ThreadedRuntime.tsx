@@ -18,7 +18,6 @@ const DEFAULT_HOST_APP_NAME = 'ThreadedRuntimeHost';
 const DEFAULT_RUNTIME_KIND = 'threaded-runtime';
 const BUSINESS_RUNTIME_KIND = 'business-runtime';
 const THREADED_SCREEN_STYLE: ViewStyle = { flex: 1 };
-const HEADLESS_TASK_RUNNER_MODULE = 'ThreadedRuntimeHeadlessTaskRunner';
 const RUNTIME_FUNCTION_RUNNER_MODULE = 'ThreadedRuntimeFunctionRunner';
 
 export type ThreadedComponent<Props extends object = Record<string, never>> =
@@ -31,17 +30,8 @@ export type ThreadedComponent<Props extends object = Record<string, never>> =
 type ThreadedComponentLoader = () => ComponentType<any>;
 type ThreadedComponentRegistry = Map<string, ThreadedComponentLoader>;
 type RuntimeFunctionLoader = () => RuntimeFunction<any>;
-export type ThreadedHeadlessTaskContext<Payload> = {
-  payload: Payload;
-  runtimeName: ThreadedRuntimeName;
-  taskName: string;
-};
-export type ThreadedHeadlessTask<Payload = unknown> = (
-  context: ThreadedHeadlessTaskContext<Payload>,
-) => void | Promise<void>;
 
 const threadedComponents: ThreadedComponentRegistry = new Map();
-const threadedHeadlessTasks = new Map<string, ThreadedHeadlessTask<any>>();
 const runtimeFunctions = new Map<string, RuntimeFunctionLoader>();
 const loadedRuntimeFunctions = new Map<string, RuntimeFunction<any>>();
 
@@ -60,6 +50,16 @@ type ThreadedRuntimeFunctionsNitro = {
     functionId: string,
     argsJson: string,
   ) => Promise<string>;
+  call?: (
+    runtimeName: string,
+    functionId: string,
+    argsJson: string,
+  ) => Promise<string>;
+  schedule?: (
+    runtimeName: string,
+    functionId: string,
+    argsJson: string,
+  ) => Promise<void>;
 };
 
 type ThreadedRuntimeNativeModule = {
@@ -70,21 +70,16 @@ type ThreadedRuntimeNativeModule = {
     kind: string,
     useMainNativeModules: boolean,
   ) => Promise<void>;
-  runHeadlessTask?: (
-    runtimeName: string,
-    taskName: string,
-    payloadJson: string,
-  ) => Promise<void>;
-  dispatchHeadlessTask?: (
-    runtimeName: string,
-    taskName: string,
-    payloadJson: string,
-  ) => Promise<void>;
-  callRuntimeFunction?: (
+  call?: (
     runtimeName: string,
     functionId: string,
     argsJson: string,
   ) => Promise<string>;
+  schedule?: (
+    runtimeName: string,
+    functionId: string,
+    argsJson: string,
+  ) => Promise<void>;
   completeRuntimeFunctionCall?: (
     callId: string,
     resultJson: string | null,
@@ -222,12 +217,13 @@ export type ThreadedRuntimePrewarmOptions = {
   kind?: string;
   useMainNativeModules?: boolean;
 };
-export type ThreadedHeadlessTaskOptions<Payload = unknown> = {
-  payload?: Payload;
-  runtimeName?: ThreadedRuntimeName;
-};
 
 type AnyFunction = (...args: any[]) => any;
+type VoidReturningFunction<TFunction extends AnyFunction> = Awaited<
+  ReturnType<TFunction>
+> extends void
+  ? TFunction
+  : never;
 
 export type RuntimeFunctionMetadata = {
   id: string;
@@ -239,7 +235,14 @@ export type RuntimeFunction<TFunction extends AnyFunction> = TFunction & {
     runtimeName: ThreadedRuntimeName,
     ...args: Parameters<TFunction>
   ): Promise<Awaited<ReturnType<TFunction>>>;
-};
+} & (Awaited<ReturnType<TFunction>> extends void
+    ? {
+        scheduleOn(
+          runtimeName: ThreadedRuntimeName,
+          ...args: Parameters<TFunction>
+        ): Promise<void>;
+      }
+    : {});
 
 export type RuntimeFunctionCallBuilder<TFunction extends AnyFunction> = {
   on(
@@ -247,6 +250,12 @@ export type RuntimeFunctionCallBuilder<TFunction extends AnyFunction> = {
   ): (
     ...args: Parameters<TFunction>
   ) => Promise<Awaited<ReturnType<TFunction>>>;
+};
+
+export type RuntimeFunctionScheduleBuilder<TFunction extends AnyFunction> = {
+  on(
+    runtimeName: ThreadedRuntimeName,
+  ): (...args: Parameters<TFunction>) => Promise<void>;
 };
 
 export type RuntimeFunctionFactory = {
@@ -312,13 +321,6 @@ export function registerLazyThreadedComponent<Props extends object>(
   threadedComponents.set(name, loadComponent as ThreadedComponentLoader);
 }
 
-export function registerThreadedHeadlessTask<Payload = unknown>(
-  name: string,
-  task: ThreadedHeadlessTask<Payload>,
-) {
-  threadedHeadlessTasks.set(name, task as ThreadedHeadlessTask<any>);
-}
-
 export function registerRuntimeFunction<TFunction extends AnyFunction>(
   id: string,
   loadFunction: () => RuntimeFunction<TFunction>,
@@ -340,7 +342,15 @@ function attachRuntimeFunction<TFunction extends AnyFunction>(
     runtimeFn.__runtimeFunction = { id };
   }
   runtimeFn.runOn = (runtimeName, ...args) =>
-    ThreadedRuntime.run(runtimeName, runtimeFn, ...args);
+    ThreadedRuntime.call(runtimeName, runtimeFn, ...args);
+  Object.assign(runtimeFn, {
+    scheduleOn: (runtimeName: ThreadedRuntimeName, ...args: unknown[]) =>
+      ThreadedRuntime.schedule(
+        runtimeName,
+        runtimeFn as RuntimeFunction<(...args: any[]) => void>,
+        ...args,
+      ),
+  });
   return runtimeFn;
 }
 
@@ -363,7 +373,18 @@ export function call<TFunction extends AnyFunction>(
 ): RuntimeFunctionCallBuilder<TFunction> {
   return {
     on(runtimeName) {
-      return (...args) => ThreadedRuntime.run(runtimeName, fn, ...args);
+      return (...args) => ThreadedRuntime.call(runtimeName, fn, ...args);
+    },
+  };
+}
+
+export function schedule<TFunction extends AnyFunction>(
+  fn: RuntimeFunction<TFunction> &
+    RuntimeFunction<VoidReturningFunction<TFunction>>,
+): RuntimeFunctionScheduleBuilder<TFunction> {
+  return {
+    on(runtimeName) {
+      return (...args) => ThreadedRuntime.schedule(runtimeName, fn, ...args);
     },
   };
 }
@@ -541,43 +562,6 @@ export function ThreadedRuntimeHost({
   return <Component {...initialProps} runtimeName={runtimeName} />;
 }
 
-function runRegisteredHeadlessTask(
-  taskName: string,
-  payloadJson: string,
-  runtimeName: string,
-) {
-  const task = threadedHeadlessTasks.get(taskName);
-  if (!task) {
-    console.warn(`No threaded headless task registered for "${taskName}"`);
-    return;
-  }
-
-  let payload: unknown;
-  try {
-    payload = payloadJson ? JSON.parse(payloadJson) : undefined;
-  } catch (error) {
-    console.warn(
-      `Invalid payload for threaded headless task "${taskName}"`,
-      error,
-    );
-    payload = undefined;
-  }
-
-  try {
-    void Promise.resolve(
-      task({
-        payload,
-        runtimeName,
-        taskName,
-      }),
-    ).catch(error => {
-      console.warn(`Threaded headless task "${taskName}" failed`, error);
-    });
-  } catch (error) {
-    console.warn(`Threaded headless task "${taskName}" failed`, error);
-  }
-}
-
 async function runRegisteredRuntimeFunction(
   functionId: string,
   argsJson: string,
@@ -600,6 +584,22 @@ async function runRegisteredRuntimeFunction(
       stack: error instanceof Error ? error.stack : undefined,
       runtimeName,
     });
+  }
+}
+
+function scheduleRegisteredRuntimeFunction(
+  functionId: string,
+  argsJson: string,
+  _runtimeName: string,
+) {
+  try {
+    void Promise.resolve(
+      callRegisteredRuntimeFunction(functionId, argsJson),
+    ).catch((error) => {
+      console.warn(`Scheduled runtime function "${functionId}" failed`, error);
+    });
+  } catch (error) {
+    console.warn(`Scheduled runtime function "${functionId}" failed`, error);
   }
 }
 
@@ -717,29 +717,7 @@ export const ThreadedRuntime = {
     });
   },
 
-  runHeadlessTask<Payload = unknown>(
-    taskName: string,
-    options: ThreadedHeadlessTaskOptions<Payload> = {},
-  ) {
-    if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
-      return Promise.resolve();
-    }
-
-    const runtimeName = options.runtimeName ?? DEFAULT_RUNTIME_NAME;
-    const payloadJson = JSON.stringify(options.payload ?? null);
-    const nativeDispatch =
-      nativeRuntime?.dispatchHeadlessTask ?? nativeRuntime?.runHeadlessTask;
-    if (!nativeDispatch) {
-      return Promise.reject(
-        new Error(
-          'ThreadedRuntime native module does not support headless tasks',
-        ),
-      );
-    }
-    return nativeDispatch(runtimeName, taskName, payloadJson);
-  },
-
-  async run<TFunction extends AnyFunction>(
+  async call<TFunction extends AnyFunction>(
     runtimeName: ThreadedRuntimeName,
     fn: RuntimeFunction<TFunction>,
     ...args: Parameters<TFunction>
@@ -762,6 +740,20 @@ export const ThreadedRuntime = {
 
     const argsJson = JSON.stringify(args);
     const runtimeNitro = getRuntimeFunctionsNitro();
+    if (runtimeNitro?.call) {
+      try {
+        const resultJson = await runtimeNitro.call(
+          runtimeName,
+          functionId,
+          argsJson,
+        );
+        return JSON.parse(resultJson) as Awaited<ReturnType<TFunction>>;
+      } catch (error) {
+        if (!isRuntimeDispatcherMissing(error)) {
+          throw error;
+        }
+      }
+    }
     if (runtimeNitro?.run) {
       try {
         const resultJson = await runtimeNitro.run(
@@ -777,8 +769,8 @@ export const ThreadedRuntime = {
       }
     }
 
-    const callRuntimeFunction = nativeRuntime?.callRuntimeFunction;
-    if (!callRuntimeFunction) {
+    const nativeCall = nativeRuntime?.call;
+    if (!nativeCall) {
       return Promise.reject<Awaited<ReturnType<TFunction>>>(
         new Error(
           'ThreadedRuntime native module does not support runtime functions',
@@ -786,29 +778,82 @@ export const ThreadedRuntime = {
       );
     }
 
-    const resultJson = await callRuntimeFunction(
-      runtimeName,
-      functionId,
-      argsJson,
-    );
+    const resultJson = await nativeCall(runtimeName, functionId, argsJson);
     return JSON.parse(resultJson) as Awaited<ReturnType<TFunction>>;
   },
 
-  call<TFunction extends AnyFunction>(
+  async schedule<TFunction extends AnyFunction>(
     runtimeName: ThreadedRuntimeName,
-    fn: RuntimeFunction<TFunction>,
+    fn: RuntimeFunction<TFunction> &
+      RuntimeFunction<VoidReturningFunction<TFunction>>,
     ...args: Parameters<TFunction>
-  ) {
-    return ThreadedRuntime.run(runtimeName, fn, ...args);
+  ): Promise<void> {
+    if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
+      try {
+        void Promise.resolve(fn(...args)).catch((error) => {
+          console.warn(
+            `Scheduled runtime function failed on "${runtimeName}"`,
+            error,
+          );
+        });
+      } catch (error) {
+        console.warn(
+          `Scheduled runtime function failed on "${runtimeName}"`,
+          error,
+        );
+      }
+      return;
+    }
+
+    const functionId = fn.__runtimeFunction?.id;
+    if (!functionId) {
+      return Promise.reject(
+        new Error(
+          'Runtime function is missing generated metadata. Make sure it is ' +
+            'exported as runtimeFunction(...) and Metro uses withThreadedRuntime(...).',
+        ),
+      );
+    }
+
+    const argsJson = JSON.stringify(args);
+    const runtimeNitro = getRuntimeFunctionsNitro();
+    if (runtimeNitro?.schedule) {
+      try {
+        await runtimeNitro.schedule(runtimeName, functionId, argsJson);
+        return;
+      } catch (error) {
+        if (!isRuntimeDispatcherMissing(error)) {
+          throw error;
+        }
+      }
+    }
+
+    const scheduleRuntimeFunction = nativeRuntime?.schedule;
+    if (!scheduleRuntimeFunction) {
+      return Promise.reject(
+        new Error(
+          'ThreadedRuntime native module does not support scheduled runtime functions',
+        ),
+      );
+    }
+
+    await scheduleRuntimeFunction(runtimeName, functionId, argsJson);
   },
 
   runtime(runtimeName: ThreadedRuntimeName) {
     return {
-      run<TFunction extends AnyFunction>(
+      call<TFunction extends AnyFunction>(
         fn: RuntimeFunction<TFunction>,
         ...args: Parameters<TFunction>
       ) {
-        return ThreadedRuntime.run(runtimeName, fn, ...args);
+        return ThreadedRuntime.call(runtimeName, fn, ...args);
+      },
+      schedule<TFunction extends AnyFunction>(
+        fn: RuntimeFunction<TFunction> &
+          RuntimeFunction<VoidReturningFunction<TFunction>>,
+        ...args: Parameters<TFunction>
+      ) {
+        return ThreadedRuntime.schedule(runtimeName, fn, ...args);
       },
     };
   },
@@ -863,10 +908,7 @@ function installThreadedRuntimeEventEmitterFallback() {
 
 installThreadedRuntimeEventEmitterFallback();
 
-registerCallableModule(HEADLESS_TASK_RUNNER_MODULE, () => ({
-  run: runRegisteredHeadlessTask,
-}));
-
 registerCallableModule(RUNTIME_FUNCTION_RUNNER_MODULE, () => ({
   run: runRegisteredRuntimeFunction,
+  schedule: scheduleRegisteredRuntimeFunction,
 }));

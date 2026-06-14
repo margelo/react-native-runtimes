@@ -6,7 +6,7 @@ For background on the APIs each gotcha touches:
 - Cross-runtime function calls and module-state isolation → [runtime-functions.md](runtime-functions.md)
 - Mounting components, `OnRuntime` rules, surface keys → [rendering-components.md](rendering-components.md)
 - Shared store sync/async split, subscriber cascade, `update` vs `set` → [shared-state.md](shared-state.md)
-- Prewarm, destroy, runtime lifecycle, `runHeadlessTask` semantics → [headless-and-lifecycle.md](headless-and-lifecycle.md)
+- Prewarm, destroy, runtime lifecycle, `schedule` semantics → [headless-and-lifecycle.md](headless-and-lifecycle.md)
 - The `index.js` gate, Metro wrapper, and Android package providers that prevent most setup gotchas → [quickstart.md](quickstart.md)
 
 ## A `runtimeFunction` returns stale or wrong data
@@ -100,19 +100,19 @@ ThreadedRuntime.setExtraReactPackagesProvider {
 
 **Fix:** pass plain JSON. For identity, pass ids. For dates, ISO strings. For things you can't serialize, look them up on the other side through a shared store, native module, or registry.
 
-## `runHeadlessTask` resolves but my handler hasn't run
+## `schedule` resolves but my function hasn't run
 
-**Symptom:** `await ThreadedRuntime.runHeadlessTask(...)` resolves, then immediately afterwards a `path.get()` returns the old value.
+**Symptom:** `await schedule(fn).on('worker')(...)` resolves, then immediately afterwards a `path.get()` returns the old value.
 
-**Why:** the Promise resolves when native **accepts the dispatch**, not when the handler body finishes. If the runtime is still starting, the dispatch is just queued.
+**Why:** the Promise resolves when native **accepts the work**, not when the function body finishes. If the runtime is still starting, the work is just queued.
 
-**Fix:** use `runtimeFunction` for request/response — its Promise waits for the function body.
+**Fix:** use `call(...)` for request/response — its Promise waits for the function body.
 
 ```ts
 const messages = await call(hydrateConversation).on('worker')({ conversationId, limit: 50 });
 ```
 
-If a headless dispatch is really what you want (fire-and-forget), put the durable output into shared state or native storage, and let the caller subscribe.
+If fire-and-forget is really what you want, put the durable output into shared state or native storage, and let the caller subscribe.
 
 ## `<OnRuntime>` doesn't render anything / Metro build fails on duplicate name
 

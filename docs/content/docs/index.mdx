@@ -17,12 +17,12 @@ import {
 **React Native Runtimes** is a pair of React Native libraries that let your
 app run UI and state work across several JavaScript runtimes:
 
-- [`@react-native-runtimes/core`](/docs/threaded-runtime/render-components) — mounts React components, whole screens, or headless tasks on **named secondary runtimes**.
+- [`@react-native-runtimes/core`](/docs/threaded-runtime/render-components) — mounts React components, whole screens, or background work on **named secondary runtimes**.
 - [`@react-native-runtimes/state`](/docs/shared-state/overview) — a small Zustand-like API backed by **native C++ state** so every runtime sees the same value.
 
 When you use both together, your main runtime stays free for navigation,
 gestures, and animations while another runtime owns the heavy work — chat
-screens, infinite lists, sync engines, headless hydration, or anything that
+screens, infinite lists, sync engines, background hydration, or anything that
 would otherwise block the UI.
 
 <Callout title="Why two runtimes?">
@@ -57,7 +57,7 @@ would otherwise block the UI.
   <Card
     icon={<SparklesIcon />}
     title="Recipes"
-    description="Real-world examples — chat screens, lists, headless hydration, shared trees."
+    description="Real-world examples — chat screens, lists, background hydration, shared trees."
     href="/docs/recipes/chat-on-secondary-runtime"
   />
 </Cards>
@@ -85,7 +85,7 @@ would otherwise block the UI.
 - A **threaded component** is a React component registered with `threadedComponent` (or by being a direct child of `OnRuntime`).
 - A **threaded surface** is a native view that asks a named runtime to render a registered component.
 - A **prewarmed runtime** is one that started before its UI is visible.
-- A **headless task** runs JS on a named runtime without mounting any UI.
+- A **scheduled runtime function** runs JS on a named runtime without mounting any UI.
 - A **shared store** synchronizes state across runtimes through native C++.
 
 <Callout type="info" title="Tip">

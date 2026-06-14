@@ -9,14 +9,14 @@ static NSString *NSStringFromStdString(const std::string &value)
   return [NSString stringWithUTF8String:value.c_str()];
 }
 
-void dispatchHeadlessTask(
+void schedule(
     const std::string &runtimeName,
-    const std::string &taskName,
-    const std::string &payloadJson)
+    const std::string &functionId,
+    const std::string &argsJson)
 {
-  [ThreadedRuntime dispatchHeadlessTaskWithRuntimeName:NSStringFromStdString(runtimeName)
-                                             taskName:NSStringFromStdString(taskName)
-                                          payloadJson:NSStringFromStdString(payloadJson)];
+  [ThreadedRuntime scheduleWithRuntimeName:NSStringFromStdString(runtimeName)
+                                functionId:NSStringFromStdString(functionId)
+                                  argsJson:NSStringFromStdString(argsJson)];
 }
 
 void prewarmRuntime(const std::string &runtimeName)

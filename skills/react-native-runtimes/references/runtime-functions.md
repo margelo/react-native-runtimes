@@ -131,7 +131,7 @@ Every runtime loads the same bundle, so every runtime installs the same registra
 
 ## When NOT to use `runtimeFunction`
 
-- **The caller doesn't need a return value.** Use a headless task instead — see [headless-and-lifecycle.md](headless-and-lifecycle.md). `ThreadedRuntime.runHeadlessTask` returns when native accepts the dispatch (not when the body finishes), which is the right shape for fire-and-forget.
+- **The caller doesn't need a return value.** Invoke the runtime function with `schedule(fn).on(runtimeName)(...)` instead of `call(...)` — see [headless-and-lifecycle.md](headless-and-lifecycle.md). `schedule` still takes a `runtimeFunction`, but resolves when native accepts the work (not when the body finishes), which is the right shape for fire-and-forget.
 - **Per-frame animation work.** Use `react-native-worklets-core` / Reanimated worklets. This library is for screen-scoped or app-lifetime work, not the animation loop.
 - **Inline anonymous work.** Convert it to an exported `runtimeFunction` (or a directive function). Anonymous closures don't have a stable id.
 

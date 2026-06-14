@@ -14,7 +14,8 @@ namespace margelo::nitro::threadedruntime {
     HybridObject::loadHybridMethods();
     // load custom methods/properties
     registerHybrids(this, [](Prototype& prototype) {
-      prototype.registerHybridMethod("run", &HybridThreadedRuntimeFunctionsSpec::run);
+      prototype.registerHybridMethod("call", &HybridThreadedRuntimeFunctionsSpec::call);
+      prototype.registerHybridMethod("schedule", &HybridThreadedRuntimeFunctionsSpec::schedule);
     });
   }
 

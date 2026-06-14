@@ -51,6 +51,14 @@ function isRuntimeFunctionCall(node) {
   return runtimeFunctionNameFromCall(node) !== undefined;
 }
 
+function isBareRuntimeFunctionCall(node) {
+  return (
+    node?.type === 'CallExpression' &&
+    node.callee.type === 'Identifier' &&
+    node.callee.name === 'runtimeFunction'
+  );
+}
+
 function runtimeFunctionShortcutName(functionName) {
   return `${functionName}_`;
 }
@@ -99,7 +107,7 @@ function onRuntimeChildNameFromJsxElement(node) {
     return null;
   }
 
-  const children = node.children.filter(child => {
+  const children = node.children.filter((child) => {
     if (child.type === 'JSXText') {
       return child.value.trim().length > 0;
     }
@@ -197,7 +205,8 @@ function extractCallOnRuntimeCall(node) {
   if (
     callExpression.type !== 'CallExpression' ||
     callExpression.callee.type !== 'Identifier' ||
-    callExpression.callee.name !== 'call'
+    (callExpression.callee.name !== 'call' &&
+      callExpression.callee.name !== 'schedule')
   ) {
     return null;
   }
@@ -213,6 +222,8 @@ function extractCallOnRuntimeCall(node) {
   }
 
   return {
+    methodName:
+      callExpression.callee.name === 'schedule' ? 'scheduleOn' : 'runOn',
     scheduledFunction,
     runtimeArg,
     args: node.arguments,
@@ -237,7 +248,7 @@ function ensureRuntimeShortcutImports(programPath, t) {
 
   const bodyPaths = programPath.get('body');
   const lastImportPath = bodyPaths
-    .filter(bodyPath => bodyPath.isImportDeclaration())
+    .filter((bodyPath) => bodyPath.isImportDeclaration())
     .at(-1);
 
   if (lastImportPath) {
@@ -266,7 +277,7 @@ function ensureThreadedComponentImport(programPath, t) {
 
   const bodyPaths = programPath.get('body');
   const lastImportPath = bodyPaths
-    .filter(bodyPath => bodyPath.isImportDeclaration())
+    .filter((bodyPath) => bodyPath.isImportDeclaration())
     .at(-1);
 
   if (lastImportPath) {
@@ -379,7 +390,7 @@ module.exports = function runtimeFunctionBabelPlugin({ types: t }) {
           collectOnRuntimeComponentNames(programPath);
         const runtimeShortcutReplacements = [];
         const threadedComponentReplacements = [];
-        programPath.get('body').forEach(bodyPath => {
+        programPath.get('body').forEach((bodyPath) => {
           let functionPath = bodyPath;
           let exportAlias = false;
           if (bodyPath.isExportNamedDeclaration()) {
@@ -458,7 +469,7 @@ module.exports = function runtimeFunctionBabelPlugin({ types: t }) {
           runtimeShortcutImports = ensureRuntimeShortcutImports(programPath, t);
         }
 
-        threadedComponentReplacements.forEach(replacement => {
+        threadedComponentReplacements.forEach((replacement) => {
           replacement.bodyPath.replaceWith(
             createThreadedComponentDeclaration({
               functionNode: replacement.functionNode,
@@ -469,7 +480,7 @@ module.exports = function runtimeFunctionBabelPlugin({ types: t }) {
           );
         });
 
-        runtimeShortcutReplacements.forEach(replacement => {
+        runtimeShortcutReplacements.forEach((replacement) => {
           replacement.bodyPath.replaceWithMultiple(
             createRuntimeShortcutStatements({
               callIdentifier: runtimeShortcutImports.callIdentifier,
@@ -497,16 +508,11 @@ module.exports = function runtimeFunctionBabelPlugin({ types: t }) {
           return;
         }
 
-        declaration.declarations.forEach(declarator => {
+        declaration.declarations.forEach((declarator) => {
           if (
             declarator.id.type !== 'Identifier' ||
-            !isRuntimeFunctionCall(declarator.init)
+            !isBareRuntimeFunctionCall(declarator.init)
           ) {
-            return;
-          }
-
-          const existingName = runtimeFunctionNameFromCall(declarator.init);
-          if (existingName) {
             return;
           }
 
@@ -537,7 +543,7 @@ module.exports = function runtimeFunctionBabelPlugin({ types: t }) {
             t.callExpression(
               t.memberExpression(
                 callOnRuntimeCall.scheduledFunction,
-                t.identifier('runOn'),
+                t.identifier(callOnRuntimeCall.methodName),
               ),
               [callOnRuntimeCall.runtimeArg, ...callOnRuntimeCall.args],
             ),

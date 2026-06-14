@@ -25,7 +25,12 @@ void registerRuntimeDispatcher(
 
 void unregisterRuntimeDispatcher(const std::string &runtimeName);
 
-std::shared_ptr<margelo::nitro::Promise<std::string>> callRuntimeFunctionOnRuntime(
+std::shared_ptr<margelo::nitro::Promise<std::string>> callOnRuntime(
+    const std::string &runtimeName,
+    const std::string &functionId,
+    const std::string &argsJson);
+
+std::shared_ptr<margelo::nitro::Promise<void>> scheduleRuntimeFunctionOnRuntime(
     const std::string &runtimeName,
     const std::string &functionId,
     const std::string &argsJson);

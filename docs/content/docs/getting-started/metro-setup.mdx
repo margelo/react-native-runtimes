@@ -66,16 +66,16 @@ root and emits a static conditional require. The generated entry loads
 `background`.
 
 ```ts title="index.background.ts"
-import { registerThreadedHeadlessTask } from '@react-native-runtimes/core';
+import { runtimeFunction } from '@react-native-runtimes/core';
 import { business } from './src/businessStore';
 
-registerThreadedHeadlessTask<{ reason: string }>(
+export const refreshBusiness = runtimeFunction.named(
   'business:refresh',
-  async ({ payload }) => {
+  async ({ reason }: { reason: string }) => {
     await business.hydrate();
     await business.update(state => ({
       ...state,
-      lastRefreshReason: payload.reason,
+      lastRefreshReason: reason,
       refreshCount: state.refreshCount + 1,
     }));
   },
@@ -86,8 +86,8 @@ void business.hydrate();
 
 <Callout title="Keep UI out of bootstrap files" type="warn">
   Don't import React components or anything that would mount UI inside
-  `index.<runtime>.ts`. Treat it as the runtime's bootstrap: register headless
-  tasks, hydrate stores, start app-lifetime queues.
+  `index.<runtime>.ts`. Treat it as the runtime's bootstrap: register runtime
+  functions, hydrate stores, start app-lifetime queues.
 </Callout>
 
 The file suffix must match the runtime name used at the native side. If your

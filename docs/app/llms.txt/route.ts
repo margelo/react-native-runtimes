@@ -18,7 +18,7 @@ export async function GET() {
   const body = [
     '# React Native Runtimes',
     '',
-    '> Run React Native UI and state work across named JS runtimes. Threaded rendering, headless tasks, and shared native-backed state.',
+    '> Run React Native UI and state work across named JS runtimes. Threaded rendering, background work, and shared native-backed state.',
     '',
     'This file lists every page in the docs in a machine-readable format. Pair it with `/llms-full.txt` for the full content concatenated in one document.',
     '',
