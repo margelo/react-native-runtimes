@@ -1,0 +1,76 @@
+---
+title: Comparison with react-native-worklets
+description: How React Native Runtimes differs from Software Mansion's worklets, and when to reach for each.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+[react-native-worklets](https://docs.swmansion.com/react-native-worklets/docs/fundamentals/getting-started/)
+(Software Mansion) and React Native Runtimes both run JavaScript off the main
+runtime, but they solve different problems and use different execution models.
+
+<Callout type="info" title="Complementary, not competing">
+  Worklets win for synchronous, frame-precise work on the UI thread —
+  animations and gestures, where Reanimated is built on them. React Native
+  Runtimes wins when you need to move entire screens, React trees, or
+  app-startup and business logic off the main JS thread. Many apps benefit
+  from using both.
+</Callout>
+
+## When react-native-runtimes makes sense
+
+Three architectures, from the quickest to adopt to the most complete.
+
+### 1. Move critical Component to another thread
+
+If your application is too complex to migrate to a full two-runtime
+architecture, a good interim solution is to move only the critical parts — a
+long list or charts, for instance — onto another thread.
+
+The main runtime keeps ownership of navigation and the rest of the screen;
+only the component that drops frames moves off it with
+[`<OnRuntime>`](/docs/threaded-runtime/render-components). See the
+[LegendList on a runtime](/docs/recipes/legend-list-on-runtime) recipe for a
+complete example.
+
+### 2. Split rendering across two threads
+
+If your JS thread is already optimized but you still hit rendering-time
+limits, it's worth splitting the render across two threads. In a chat app, the
+conversation drawer can render on one runtime and the chat feed on another —
+heavy re-renders in the feed can never delay the drawer, and vice versa.
+
+See the [chat on a secondary runtime](/docs/recipes/chat-on-secondary-runtime)
+recipe for a complete example.
+
+### 3. Separate business logic from rendering
+
+The final — and optimal — architecture: business logic lives on one runtime,
+rendering on another.
+
+Ever wondered why LegendList and FlashList are so fast in their example apps?
+Because nothing on the JS thread can interrupt them. That is exactly what this
+architecture achieves in a real app.
+
+When the app process starts, two runtimes start in parallel: the main React
+Native runtime and a
+[background runtime](/docs/threaded-runtime/business-logic-executor) that you
+prewarm from native at launch. The
+background runtime has access to all native modules — it can fetch fresh data,
+hold a WebSocket connection, and read from databases. Meanwhile, the much
+lighter rendering runtime serves cached data (for instance through the
+[shared store](/docs/shared-state/overview)) without ever being interrupted by
+business logic.
+
+## Should I spin up 10 runtimes to compute something faster?
+
+No. Each runtime is a full React Native environment — it loads the entire
+bundle, runs a React renderer, and registers native modules. That makes
+runtimes the wrong tool for raw parallel computation. Use
+[react-native-worklets](https://docs.swmansion.com/react-native-worklets/docs/fundamentals/getting-started/)
+for that instead 🙂
+
+## Sources
+
+- [Worklets — Getting started](https://docs.swmansion.com/react-native-worklets/docs/fundamentals/getting-started/)
+- [Worklets — Runtime kinds](https://docs.swmansion.com/react-native-worklets/docs/fundamentals/runtimeKinds) (RN / UI / Worker runtimes)

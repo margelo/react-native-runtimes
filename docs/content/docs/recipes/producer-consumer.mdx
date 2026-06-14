@@ -1,0 +1,39 @@
+---
+title: Producer and consumer
+description: Fetch on the main runtime, render on a threaded runtime, share state through a path handle.
+---
+
+Use the main runtime as a data producer and a threaded runtime as the
+consumer when network and UI ownership are separate.
+
+```tsx
+const pokemonItems = pokemonStore.path<PokemonEntry[]>('pokemonItems');
+
+async function fetchMore() {
+  const page = await fetchNextPage();
+
+  await pokemonItems.update(items => [...items, ...page]);
+}
+```
+
+The threaded runtime subscribes to the shared path:
+
+```tsx
+function PokemonConsumer() {
+  const items = pokemonItems.use();
+
+  return <FlatList data={items} renderItem={renderPokemon} />;
+}
+
+<OnRuntime name="pokemon-runtime">
+  <PokemonConsumer />
+</OnRuntime>;
+```
+
+The sample app includes this as **PokeAPI shared runtime feed**.
+
+## Why split it
+
+- Network code is one-shot and side-effecty. Keep it on the main runtime so cancellation, auth headers, and retry logic stay with the UI's lifecycle.
+- The list re-renders every time new items arrive. Keep that on a worker runtime so it doesn't compete with navigation or scroll on the main side.
+- The boundary between them is the shared path, not a prop.

@@ -21,6 +21,60 @@ The package owns the JS registry and host API:
 - `ThreadedRuntimeHost`
 - `ThreadedRuntime.prewarm/preload/call/schedule/destroy/destroyAll/getRuntimeNames`
 
+## Expo
+
+This package supports Expo via an optional config plugin. The plugin runs during
+`expo prebuild` and:
+
+- **Expo config — validates (fails on mismatch)**
+  - `newArchEnabled` must be `true` — Nitro Modules require New Architecture.
+  - `jsEngine` / `ios.jsEngine` / `android.jsEngine` must be `hermes` or unset —
+    secondary runtimes always instantiate Hermes. The plugin will not silently
+    flip these flags; set them explicitly in your Expo config.
+- **Android — `MainApplication.kt`** — adds
+  `ThreadedRuntime.setExtraReactPackagesProvider { listOf(NitroModulesPackage()) }`
+  inside `onCreate` before `loadReactNative(this)`. Secondary runtimes do not
+  inherit the host package list, so Nitro must be registered explicitly here.
+  Use `packages` to register companion runtimes packages by npm name (e.g.
+  `'@react-native-runtimes/state'`), or `androidPackages` to register raw FQNs
+  for your own app packages or libraries that don't ship `reactNativeRuntimes`
+  metadata.
+- **iOS — AppDelegate** — adds `import NativeComposeThreadedRuntime` and calls
+  `ThreadedRuntime.configure(withReactNativeDelegate:launchOptions:)` at the
+  start of `application(_:didFinishLaunchingWithOptions:)`. This call is
+  required: the native code calls `RCTFatal` without it. Supports both Swift and
+  Objective-C AppDelegates. All patches are idempotent.
+
+The package does **not** require Expo at runtime.
+
+Add the plugin to your `app.config.ts`:
+
+```ts
+export default {
+  newArchEnabled: true,
+  plugins: [
+    ['@react-native-runtimes/core', {
+      // Companion packages registered by npm name (recommended).
+      // Each listed package must declare its FQN in its own package.json under
+      // `reactNativeRuntimes.android.package`.
+      packages: ['@react-native-runtimes/state'],
+
+      // Escape hatch: raw Android ReactPackage FQNs for your own app packages
+      // or libraries that don't ship `reactNativeRuntimes` metadata.
+      // androidPackages: ['com.mycompany.MyCustomPackage'],
+    }],
+  ],
+};
+```
+
+In most Expo projects `@expo/config-plugins` is already available. If you use a
+custom or minimal Expo setup and `expo prebuild` fails with
+`Cannot find module '@expo/config-plugins'`, install it explicitly:
+
+```sh
+npm install --save-dev @expo/config-plugins
+```
+
 ## Setup
 
 ### 1. Configure Metro
@@ -59,8 +113,12 @@ Add the generated directory to `.gitignore`:
 Load the generated entry only in the secondary runtime path:
 
 ```js
-if (global.__THREADED_RUNTIME_ENV__ || global._is_it_a_list_env === true) {
-  require("./.threaded-runtime/entry");
+const {
+  isMainRuntime,
+} = require('@react-native-runtimes/core');
+
+if (!isMainRuntime()) {
+  require('./.threaded-runtime/entry');
 }
 ```
 
@@ -91,8 +149,7 @@ index.two-runtimes-business-runtime.ts
 
 Only files matching `index.<runtime>.ts` in the project root are discovered.
 The generated entry requires a file when `<runtime>` matches either
-`global.__THREADED_RUNTIME_ENV__.kind` or
-`global.__THREADED_RUNTIME_ENV__.runtimeName`.
+`getCurrentRuntime().kind` or `getCurrentRuntime().name`.
 
 The component module is required only when `ThreadedRuntimeHost` receives that
 component name.
@@ -531,10 +588,13 @@ register `ThreadedRuntimeHost` under the same app name that native uses when it
 creates a surface:
 
 ```js
-const { AppRegistry } = require("react-native");
+const { AppRegistry } = require('react-native');
+const {
+  isMainRuntime,
+} = require('@react-native-runtimes/core');
 
-if (global._is_it_a_list_env === true) {
-  require("./App"); // component registrations
+if (!isMainRuntime()) {
+  require('./App'); // component registrations
   AppRegistry.registerComponent(
     "ThreadedRuntimeHost",
     () => require("@react-native-runtimes/core").ThreadedRuntimeHost
@@ -608,12 +668,41 @@ ThreadedRuntime.prewarmBusinessRuntime(applicationContext, "business-runtime")
 That runtime receives `global.__THREADED_RUNTIME_ENV__` before the bundle runs:
 
 ```tsx
-if (global.__THREADED_RUNTIME_ENV__?.kind === "business-runtime") {
-  require("./src/businessRuntimeEntry");
+import { getCurrentRuntime } from '@react-native-runtimes/core';
+
+if (getCurrentRuntime().kind === 'business-runtime') {
+  require('./src/businessRuntimeEntry');
 } else {
   require("./src/mainRuntimeEntry");
 }
 ```
+
+## Runtime Globals
+
+Supported runtime identity is exposed through the public API:
+
+```ts
+import { getCurrentRuntime, isMainRuntime } from '@react-native-runtimes/core';
+
+const runtime = getCurrentRuntime();
+```
+
+- `getCurrentRuntime()` returns `{ isMain, name, kind }`
+- `isMainRuntime()` is the preferred bootstrap check
+
+The only supported runtime global is `global.__THREADED_RUNTIME_ENV__`, which is
+installed before bundle execution on secondary runtimes and currently contains:
+
+- `runtimeName`
+- `kind`
+
+Internal globals used by runtime-function dispatch still exist, but they are not
+part of the app-facing API:
+
+- `global.__rnrRegisterRuntimeFunction`
+- `global.__rnrCallRuntimeFunction`
+
+Apps should not depend on those names directly.
 
 iOS threaded runtimes already use the configured React Native delegate for
 native-module lookup, so `ThreadedRuntime.prewarmBusinessRuntime("business-runtime")`

@@ -1,17 +1,75 @@
 {
   "name": "@react-native-runtimes/state",
-  "version": "0.0.1",
-  "private": true,
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "version": "0.1.0-alpha.1",
+  "description": "Cross-runtime shared state for React Native multi-runtime apps. Zustand-style API backed by a process-wide C++ singleton — reads and writes from every Hermes runtime without a JS heap boundary.",
+  "keywords": [
+    "react-native",
+    "react-native-new-architecture",
+    "hermes",
+    "multi-runtime",
+    "shared-state",
+    "cross-runtime-state",
+    "zustand",
+    "state-management",
+    "nitro-modules",
+    "fabric",
+    "ios",
+    "android"
+  ],
+  "license": "MIT",
+  "author": "Szymon Kapała",
+  "contributors": [
+    {
+      "name": "Szymon Kapała",
+      "url": "https://github.com/Szymon20000"
+    },
+    {
+      "name": "Szymon Chmal",
+      "url": "https://github.com/v3ron"
+    },
+    {
+      "name": "Alex Shumihin",
+      "url": "https://github.com/pioner92"
+    },
+    {
+      "name": "Ritesh Shukla",
+      "url": "https://github.com/riteshshukla04"
+    }
+  ],
+  "homepage": "https://github.com/Szymon20000/react-native-runtimes/tree/main/packages/state#readme",
+  "bugs": {
+    "url": "https://github.com/Szymon20000/react-native-runtimes/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Szymon20000/react-native-runtimes.git",
+    "directory": "packages/state"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "reactNativeRuntimes": {
+    "android": {
+      "package": "com.nativecompose.threadedzustand.ThreadedZustandPackage"
+    }
+  },
   "scripts": {
-    "specs": "nitrogen"
+    "specs": "nitrogen",
+    "build:ts": "tsc -p tsconfig.json",
+    "build": "bun run build:ts",
+    "clean": "rm -rf lib",
+    "prepack": "bun run build",
+    "release": "release-it"
   },
   "files": [
-    "android",
+    "android/src",
+    "android/build.gradle",
+    "android/CMakeLists.txt",
+    "android/fix-prefab.gradle",
     "cpp",
     "ios",
+    "lib",
     "nitrogen/generated",
     "nitro.json",
     "NativeComposeThreadedZustand.podspec",
@@ -19,11 +77,19 @@
     "src"
   ],
   "devDependencies": {
-    "nitrogen": "^0.35.7"
+    "nitrogen": "^0.35.7",
+    "release-it": "^17.10.0",
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "react": "*",
     "react-native": "*",
     "react-native-nitro-modules": "*"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

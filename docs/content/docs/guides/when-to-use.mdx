@@ -1,0 +1,65 @@
+---
+title: When to use a second runtime
+description: A decision guide for choosing between main, threaded UI, and a background runtime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+React Native Runtimes gives you three places to put work:
+
+| Place | What it owns |
+| --- | --- |
+| **Main runtime** | Navigation, gestures, top-level state, animations |
+| **Threaded UI runtime** | A whole screen or component that re-renders often |
+| **Background runtime** | App-lifetime work with no UI: sync, caches, queues |
+
+The right place depends on whether the work is **visible**, whether it
+**blocks**, and whether it's **shared** across screens.
+
+## Decision flow
+
+1. **Does the work render UI?**
+   - No → use a [background runtime](/docs/threaded-runtime/business-logic-executor)
+   - Yes → continue
+2. **Does the rendering ever stutter, drop frames, or block input?**
+   - No → keep it on the main runtime
+   - Yes → continue
+3. **Is the rendering self-contained (one screen, one big list)?**
+   - Yes → push it to a [threaded UI runtime](/docs/threaded-runtime/render-components)
+   - No → reshape it first (memoize, virtualize, batch)
+
+## When the main runtime is correct
+
+- Top-level navigators
+- Simple screens that don't render expensive lists
+- One-off forms, settings, small dialogs
+- Anything that needs synchronous access to navigation state
+
+## When a threaded UI runtime helps
+
+- A chat screen with a virtualized list of hundreds of messages
+- A feed with image-heavy items
+- A document or PDF reader
+- A code editor or markdown preview
+- Any list using FlashList / LegendList at scale
+
+<Callout type="info" title="A useful question to ask">
+  "If this screen alone caused 50 ms of JS work per frame, what else in the
+  app would suffer?" If the answer includes navigation or core gestures, that
+  screen belongs on its own runtime.
+</Callout>
+
+## When a background runtime helps
+
+- A sync engine that hits the network on its own schedule
+- A queue of pending jobs (retry, dedupe, persistence)
+- Cache hydration on cold start
+- Document parsing or local search indexing
+- Crypto orchestration through native modules
+
+## When *not* to use a second runtime
+
+- The screen already runs smoothly on the main runtime.
+- The work is one-off (it doesn't dominate any frame).
+- The runtime cost would outweigh the gain — e.g. a trivial component.
+- The work depends heavily on main-runtime singletons (navigation refs, refs from React).

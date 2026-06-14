@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "before:init": ["bun run clean", "bun run build:plugin", "bun run build:ts"]
+  },
+  "git": {
+    "commitMessage": "chore(core): release v${version}",
+    "tagName": "@react-native-runtimes/core@${version}",
+    "tagAnnotation": "Release @react-native-runtimes/core v${version}",
+    "requireBranch": "main",
+    "requireCleanWorkingDir": true,
+    "push": true
+  },
+  "github": {
+    "release": true,
+    "releaseName": "@react-native-runtimes/core v${version}",
+    "autoGenerate": true
+  },
+  "npm": {
+    "publish": true,
+    "publishPath": ".",
+    "skipChecks": true
+  }
+}

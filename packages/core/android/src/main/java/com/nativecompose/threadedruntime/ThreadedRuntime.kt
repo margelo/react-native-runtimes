@@ -444,20 +444,9 @@ private class ThreadedRuntimeBundleLoader(
         """
         var __threadedRuntimeGlobal =
           typeof globalThis !== 'undefined' ? globalThis : Function('return this')();
-        __threadedRuntimeGlobal.global = __threadedRuntimeGlobal;
-        __threadedRuntimeGlobal.globalThis = __threadedRuntimeGlobal;
-        __threadedRuntimeGlobal._is_it_a_list_env = true;
         __threadedRuntimeGlobal.__THREADED_RUNTIME_ENV__ = {
           kind: ${jsString(options.kind)},
-          runtimeName: ${jsString(runtimeName)},
-          isBackgroundRuntime: ${options.kind != ThreadedRuntime.DEFAULT_RUNTIME_KIND},
-          useMainNativeModules: ${options.useMainNativeModules},
-          version: 1
-        };
-        __threadedRuntimeGlobal.__COMPOSE_CHAT_LIST_ENV__ = {
-          kind: 'background-list',
-          runtimeName: ${jsString(runtimeName)},
-          version: 1
+          runtimeName: ${jsString(runtimeName)}
         };
         """.trimIndent(),
     )

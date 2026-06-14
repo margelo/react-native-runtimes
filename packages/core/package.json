@@ -1,23 +1,86 @@
 {
   "name": "@react-native-runtimes/core",
-  "version": "0.0.1",
-  "private": true,
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "version": "0.1.0-alpha.1",
+  "description": "Run React Native components and functions in named secondary Hermes runtimes. Threaded surfaces, headless tasks, and cross-runtime function calls for React Native New Architecture.",
+  "keywords": [
+    "react-native",
+    "react-native-new-architecture",
+    "hermes",
+    "multi-runtime",
+    "threaded-runtime",
+    "secondary-runtime",
+    "background-runtime",
+    "headless-task",
+    "runtime-function",
+    "fabric",
+    "nitro-modules",
+    "turbomodules",
+    "concurrent-rendering",
+    "ios",
+    "android"
+  ],
+  "license": "MIT",
+  "author": "Szymon Kapała",
+  "contributors": [
+    {
+      "name": "Szymon Kapała",
+      "url": "https://github.com/Szymon20000"
+    },
+    {
+      "name": "Szymon Chmal",
+      "url": "https://github.com/v3ron"
+    },
+    {
+      "name": "Alex Shumihin",
+      "url": "https://github.com/pioner92"
+    },
+    {
+      "name": "Ritesh Shukla",
+      "url": "https://github.com/riteshshukla04"
+    }
+  ],
+  "homepage": "https://github.com/Szymon20000/react-native-runtimes/tree/main/packages/core#readme",
+  "bugs": {
+    "url": "https://github.com/Szymon20000/react-native-runtimes/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Szymon20000/react-native-runtimes.git",
+    "directory": "packages/core"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
   "react-native": "src/index.ts",
+  "source": "src/index.ts",
+  "expo": {
+    "plugin": "./plugin/build/index.js"
+  },
   "scripts": {
-    "specs": "nitrogen"
+    "specs": "nitrogen",
+    "build:plugin": "tsc -p plugin/tsconfig.json",
+    "build:ts": "tsc -p tsconfig.json",
+    "build": "bun run build:plugin && bun run build:ts",
+    "clean": "rm -rf lib plugin/build",
+    "prepack": "bun run build",
+    "release": "release-it"
   },
   "files": [
-    "android",
+    "android/src",
+    "android/build.gradle",
+    "android/CMakeLists.txt",
+    "android/fix-prefab.gradle",
+    "app.plugin.js",
     "cpp",
     "ios",
+    "lib",
     "metro.d.ts",
     "metro.js",
     "metro-transformer.js",
+    "secondary-runtime-polyfill.js",
     "nitrogen/generated",
     "nitro.json",
     "NativeComposeThreadedRuntime.podspec",
+    "plugin/build",
     "README.md",
     "runtime-function-babel-plugin.js",
     "src"
@@ -30,11 +93,26 @@
     }
   },
   "devDependencies": {
-    "nitrogen": "^0.35.7"
+    "@expo/config-plugins": "^9.0.0",
+    "nitrogen": "^0.35.7",
+    "release-it": "^17.10.0",
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
+    "@expo/config-plugins": ">=9.0.0",
     "react": "*",
     "react-native": "*",
     "react-native-nitro-modules": "*"
+  },
+  "peerDependenciesMeta": {
+    "@expo/config-plugins": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

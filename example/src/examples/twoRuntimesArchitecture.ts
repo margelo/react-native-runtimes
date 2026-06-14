@@ -1,4 +1,5 @@
 import {
+  getCurrentRuntime,
   ThreadedRuntime,
   runtimeFunction,
   schedule,
@@ -98,15 +99,7 @@ export const twoRuntimeMetrics =
   );
 
 function runtimeKind() {
-  const globals = globalThis as {
-    __COMPOSE_CHAT_LIST_ENV__?: { kind?: string };
-    __THREADED_RUNTIME_ENV__?: { kind?: string };
-  };
-  return (
-    globals.__THREADED_RUNTIME_ENV__?.kind ??
-    globals.__COMPOSE_CHAT_LIST_ENV__?.kind ??
-    'main'
-  );
+  return getCurrentRuntime().kind ?? 'main';
 }
 
 function nextMetrics(

@@ -1,0 +1,71 @@
+name: Lint
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_name != 'main' }}
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/lint.yml'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.js'
+      - '**/*.jsx'
+      - '**/*.mjs'
+      - '**/*.json'
+      - '**/tsconfig.json'
+      - 'bun.lock'
+  pull_request:
+    paths:
+      - '.github/workflows/lint.yml'
+      - '**/*.ts'
+      - '**/*.tsx'
+      - '**/*.js'
+      - '**/*.jsx'
+      - '**/*.mjs'
+      - '**/*.json'
+      - '**/tsconfig.json'
+      - 'bun.lock'
+
+jobs:
+  lint:
+    name: Lint TypeScript (eslint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install npm dependencies (bun)
+        run: bun install
+
+      - name: Run ESLint in example/
+        working-directory: example
+        run: bun run lint
+
+  typecheck:
+    name: Compile TypeScript (tsc)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install npm dependencies (bun)
+        run: bun install
+
+      - name: Build packages/core (tsc)
+        working-directory: packages/core
+        run: bun run build
+
+      - name: Build packages/state (tsc)
+        working-directory: packages/state
+        run: bun run build
+
+      - name: Typecheck example/ (tsc --noEmit)
+        working-directory: example
+        run: bunx tsc --noEmit

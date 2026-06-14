@@ -1,0 +1,145 @@
+---
+title: Persistence
+description: Save shared state across runtime teardown and app restart with persist + subtrees.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Enable persistence when state should survive runtime teardown or app restart.
+Persistence is native, scoped per store key, and hydrates lazily by default.
+
+```tsx
+export const preferencesStore = createSharedStore({
+  name: 'preferences',
+  initialState: {
+    counter: { count: 0, updatedAt: null },
+  },
+  persist: {
+    key: 'preferences-v1',
+    subtrees: ['counter'],
+  },
+});
+
+export const counter = preferencesStore.path<{
+  count: number;
+  updatedAt: string | null;
+}>('counter');
+```
+
+`persist.subtrees` lists the exact subtree keys that are written to disk.
+**Paths not listed are not persisted at all** — they share state across
+runtimes but reset on app restart.
+
+<Callout type="info" title="Versioning the schema">
+  Set `persist.version` (default `1`) and bump it when the persisted shape
+  changes in a way that isn't backwards-compatible — the on-disk key includes
+  the version, so old files are simply ignored.
+</Callout>
+
+## How it works under the hood
+
+Persistence is deliberately minimal — there is **no third-party storage
+library**. Each persisted subtree is written as a raw JSON file on disk.
+
+| Platform | Storage location |
+| --- | --- |
+| iOS | `NSApplicationSupportDirectory/threaded-zustand/<sanitized-key>.json` |
+| Android | `<context.filesDir>/threaded-zustand/<sanitized-key>.json` |
+
+Reads and writes use `std::ifstream` / `std::ofstream` from the shared C++
+core. One file per persisted subtree.
+
+### Serialization runs in JS
+
+JSON encoding and decoding happen **in JavaScript**, not in native code:
+
+- `set` / `update` / `dispatch` calls `JSON.stringify()` and hands the
+  resulting string to native.
+- Hydration reads the file into a string in native, returns it to JS, and
+  `JSON.parse()` reconstructs the value.
+
+The native side stores and returns the byte string as-is — there is no
+intermediate `folly::dynamic`, `nlohmann::json`, or binary format.
+
+### Which thread does serialization run on?
+
+The **calling runtime's JS thread**. Not the platform main / UI thread, but
+also *not* a dedicated I/O thread:
+
+1. `JSON.stringify` runs synchronously on whichever runtime called `set`.
+2. The native state write and the persist-to-disk call are both synchronous
+   (Nitro) — the file is written before the call returns.
+3. The change notification is published only after the write completes.
+
+That means a multi-megabyte payload written from the **UI runtime** will
+block UI JS while it stringifies and flushes to disk. The fix is structural,
+not a setting: persist heavy state from a [secondary runtime](/docs/concepts/runtimes)
+and let the UI runtime subscribe.
+
+### Writes are write-through
+
+There is **no batching, debouncing, or dirty-flag**. Every mutation against
+a persisted path:
+
+1. Resolves the next state.
+2. Stringifies the **entire subtree** (not just the diff).
+3. Overwrites the file in full.
+4. Bumps the in-memory revision and emits a change event.
+
+100 writes in a row = 100 `JSON.stringify` calls and 100 file writes.
+
+<Callout type="warn" title="Don't persist inside hot loops">
+  Avoid calling `set` on a persisted path from a per-frame callback, gesture
+  handler, or scroll listener. Debounce on your side, or write a summary to
+  the persisted path only when the interaction settles.
+</Callout>
+
+### Revisions are in-memory only
+
+The native store keeps an integer revision per entry, bumped on every
+`setState`. Revisions are **not** persisted — they reset to 0 on app launch
+and exist so subscribers can detect missed updates within a session.
+See [Concurrency and revisions](/docs/shared-state/locking-and-revisions).
+
+## `subtrees` vs `persist.subtrees`
+
+These are two different options that are easy to confuse:
+
+| Option | What it controls |
+| --- | --- |
+| `subtrees` | **Eager hydration.** Listed subtrees hydrate immediately at store creation instead of lazily on first access. Nothing is written to disk. |
+| `persist.subtrees` | **Persistence.** Listed subtrees are written to disk and restored on restart. |
+
+The top-level `subtrees` option is **not** persistence — see
+[Paths](/docs/shared-state/paths#listing-the-surface) for the eager-hydration
+counterpart. To both hydrate eagerly *and* persist, set both:
+
+```tsx
+export const pokemonStore = createSharedStore<PokemonState>({
+  name: 'pokemon',
+  initialState: {
+    catalog: initialCatalog,
+    pokemonItems: [],
+  },
+  subtrees: ['catalog', 'pokemonItems'], // hydrate eagerly
+  persist: {
+    key: 'pokemon-v1',
+    subtrees: ['catalog'], // also save 'catalog' to disk
+  },
+});
+```
+
+## Patterns
+
+| You want… | Do this |
+| --- | --- |
+| A few preferences saved across launches | `persist.subtrees: ['theme', 'auth', 'counter']` |
+| Per-conversation drafts that survive restart | Persist the `'drafts'` subtree together and update the whole object on each change — while you can specify individual paths like `['drafts', 'conv123']` in `persist.subtrees`, each unique value requires its own entry at store creation time, so dynamic conversation IDs cannot be persisted individually this way. A single shared subtree is simpler and more efficient |
+| A huge cache that must hydrate eagerly | Add it to `subtrees` and accept the cold-start cost |
+| A huge cache that can hydrate on first use | Don't list it — call `path.hydrate()` from the screen that needs it |
+
+<Callout type="warn" title="Don't persist what you can recompute">
+  If a value is cheap to recompute on launch (derived from another store, or
+  fetched on screen open), don't persist it. Less state on disk means fewer
+  schema migrations to think about.
+</Callout>
