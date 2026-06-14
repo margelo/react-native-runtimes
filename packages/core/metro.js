@@ -50,7 +50,15 @@ function withThreadedRuntime(config, options = {}) {
 
   regenerate();
 
-  if (options.watch !== false) {
+  // The source watcher only matters for live entry regeneration during an
+  // interactive `metro start`. In CI / one-shot runs (e.g. react-native-harness)
+  // no source files change mid-run — the entry is already generated above — and
+  // a recursive fs.watch handle isn't released on Linux even after unref(), which
+  // keeps the harness's host Jest process alive and hangs the CI step after tests
+  // pass. Default the watcher off under CI; callers can still force it via
+  // options.watch.
+  const watch = options.watch ?? !process.env.CI;
+  if (watch) {
     watchSources({ projectRoot, roots, onChange: regenerate });
   }
 
