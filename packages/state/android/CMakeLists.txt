@@ -30,5 +30,13 @@ target_compile_options(
   -Wall
 )
 
+# Android 15+ devices can use 16 KB memory pages; unaligned LOAD segments put
+# the app behind an "App Compatibility" dialog on Android 16.
+target_link_options(
+  NativeComposeThreadedZustand
+  PRIVATE
+  -Wl,-z,max-page-size=16384
+)
+
 # Pull in nitrogen-generated sources, include dirs, and link libs (defines target_sources/include_directories/target_link_libraries on NativeComposeThreadedZustand).
 include(${CMAKE_SOURCE_DIR}/../nitrogen/generated/android/NativeComposeThreadedZustand+autolinking.cmake)
