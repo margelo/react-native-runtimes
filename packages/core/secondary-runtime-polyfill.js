@@ -7,11 +7,19 @@
 // and `requireNativeModule(...)` — throws and crashes the secondary runtime
 // before the threaded entry runs.
 //
-// On the main runtime the native host is already installed by the time polyfills
-// evaluate, so the `typeof ... undefined` guard leaves it untouched. On a
-// secondary runtime it's absent, so we install a minimal stub. On bare React
-// Native (no Expo in the bundle) this is inert.
-if (typeof globalThis.expo === 'undefined') {
+// Only stub inside secondary runtimes, detected via the env global that is
+// always injected BEFORE the bundle evaluates (iOS: JSI in
+// didInitializeRuntime; Android: the bundle-loader prelude). A bare
+// `typeof globalThis.expo === 'undefined'` guard is not enough: on Android
+// bridgeless the MAIN runtime's native `global.expo` host installs after
+// bundle start, so the stub would win that race and mask the real host —
+// every expo-modules sync call then returns undefined through the stub Proxy
+// and Expo apps die at boot (e.g. expo-localization getLocales()). On bare
+// React Native (no Expo in the bundle) this is inert either way.
+if (
+  typeof globalThis.__THREADED_RUNTIME_ENV__ !== 'undefined' &&
+  typeof globalThis.expo === 'undefined'
+) {
   var NoopClass = function () {};
   NoopClass.prototype.addListener = function () {
     return { remove: function () {} };
