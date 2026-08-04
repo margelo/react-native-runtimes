@@ -1,63 +1,24 @@
-// TODO(cross-runtime-dev-mode): Re-enable this suite once worker runtimes can
-// reliably evaluate the app bundle in dev mode.
+// Cross-runtime dispatch, on-device via react-native-harness.
 //
-// What this suite is *meant* to test:
-//   - ThreadedRuntime.prewarmBusinessRuntime() spins up a separate worker JS
-//     context.
-//   - whoAmI.runOn('business-runtime') dispatches the runtime function on the
-//     worker and returns its self-reported identity. The result should report
-//     { isMain: false, name: 'business-runtime', kind: 'business-runtime' }.
-//   - echo / addOnRuntime / throwOnRuntime cover argument round-trip, struct
-//     results, and error propagation back to the main runtime.
+// Two things make this suite work in dev mode; both live in
+// @react-native-runtimes/core (Android):
+//   - __THREADED_RUNTIME_ENV__ is injected into every worker's jsi::Runtime
+//     by a BindingsInstaller before any script evaluates, so the runtime gate
+//     works no matter where the bundle came from (issue #35).
+//   - Debug workers bundle the generated worker entry
+//     (.threaded-runtime/entry) instead of the app entry. Under the harness
+//     this matters twice over: the harness's Metro substitutes the app entry
+//     (./index.js) with its own runner, so a worker fetching index.bundle
+//     would evaluate the harness program and never register
+//     ThreadedRuntimeFunctionRunner (the old "n = 7 callable modules" bridge
+//     timeout).
 //
-// What we observed when the suite was enabled (Android, dev mode, harness on
-// emulator):
-//   - The main runtime registers `ThreadedRuntimeFunctionRunner` /
-//     `ThreadedRuntimeHeadlessTaskRunner` as callable modules when
-//     `@react-native-runtimes/core` is imported (top of ThreadedRuntime.tsx).
-//   - The worker runtime's JS bundle is loaded but the app's user-bundle code
-//     (`__r(0)` -> index.js -> .threaded-runtime/entry.js -> @react-native-runtimes/core)
-//     never actually evaluates on the worker. Only RN's 7 built-in callable
-//     modules are present on the worker context.
-//   - Native dispatch via `callFunctionOnModule('ThreadedRuntimeFunctionRunner',
-//     'run', ...)` therefore rejects with: "Module has not been registered as
-//     callable. Registered callable JavaScript modules (n = 7): AppRegistry,
-//     HMRClient, GlobalPerformanceLogger, RCTDeviceEventEmitter, RCTLog,
-//     RCTNativeAppEventEmitter, Systrace."
-//   - The runOn() promise never settles, the harness hits its bridge timeout
-//     ("device did not respond"), and the suite fails to load tests.
-//
-// Why this is a product bug, not a test bug:
-//   In production the worker loads `assets://index.android.bundle` via
-//   `loadScriptFromAssets(..., loadSynchronously=true)`, which evaluates the
-//   bundle inline and registers the callable modules. In dev, ReactHost's new
-//   architecture decouples "load script" from "evaluate script", and worker
-//   ReactHosts without a mounted surface never trigger evaluation of the dev
-//   bundle. The user-bundle code (and therefore registerCallableModule for
-//   our runtime function runner) never runs on workers.
-//
-// What a real fix needs:
-//   1. Ensure the worker's `ReactInstance` evaluates the bundle after
-//      `loadJSBundle`, even without a surface mount (or mount a hidden
-//      synchronous surface that actually triggers evaluation in the new arch).
-//   2. Make sure our prelude (which sets `__THREADED_RUNTIME_ENV__`) is
-//      injected regardless of whether ReactHost uses its own dev-support path
-//      or our custom `JSBundleLoader`.
-//   3. Consider adding a JS-side `notifyRuntimeReady` signal and native-side
-//      coordination so dispatch only fires after worker JS has finished
-//      evaluating the user bundle.
-//
-// To re-enable: fix the above, uncomment the suite, and run:
-//   bun --cwd example test:harness --harnessRunner android \
-//     --testPathPattern cross-runtime
-
-/*
-import {
-  beforeAll,
-  describe,
-  expect,
-  it,
-} from 'react-native-harness';
+// The entry import below mirrors on the harness-driven MAIN runtime what the
+// app entry normally registers: without it, dispatch-to-main has no runtime
+// functions registered on main, because the harness runner replaces the app's
+// index.js there.
+import '../.threaded-runtime/entry';
+import { beforeAll, describe, expect, it } from 'react-native-harness';
 import {
   getCurrentRuntime,
   ThreadedRuntime,
@@ -65,7 +26,10 @@ import {
 import {
   addOnRuntime,
   echo,
+  readMainMarkerViaWorker,
+  setMainMarker,
   throwOnRuntime,
+  timerOnRuntime,
   whoAmI,
 } from '../src/harness-fixtures/runtime-introspection';
 
@@ -114,18 +78,29 @@ describe('cross-runtime dispatch via runOn()', () => {
     expect(second).toBe(`b:from:${BUSINESS_RUNTIME}`);
   });
 
+  // Regression: worker hosts used to stay paused without an Activity, so
+  // JavaTimerManager never fired and every JS timer on a worker hung forever
+  // (including whatwg-fetch's response dispatch).
+  it('JS timers fire on the worker', async () => {
+    const result = await timerOnRuntime.runOn(BUSINESS_RUNTIME, 50);
+    expect(result.runtime).toBe(BUSINESS_RUNTIME);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(40);
+  });
+
+  // Regression: dispatch to 'main' used to spawn a fresh runtime that merely
+  // happened to be named "main", so main-owned module state was missing and
+  // calls "succeeded" against the wrong runtime. The marker is module-scope
+  // state only the real main runtime holds.
+  it("dispatch to 'main' from a worker reaches the real main runtime", async () => {
+    setMainMarker('cross-runtime-token');
+    const result = await readMainMarkerViaWorker.runOn(BUSINESS_RUNTIME);
+    expect(result.workerRuntime).toBe(BUSINESS_RUNTIME);
+    expect(result.isMain).toBe(true);
+    expect(result.marker).toBe('cross-runtime-token');
+  });
+
   it('main runtime is unaffected after the worker runs', () => {
     expect(getCurrentRuntime().isMain).toBe(true);
     expect(getCurrentRuntime().name).toBe('main');
-  });
-});
-*/
-
-// Empty placeholder so Jest doesn't error "Your test suite must contain at
-// least one test." Remove when the real tests above are re-enabled.
-import { describe, expect, it } from 'react-native-harness';
-describe('cross-runtime (disabled)', () => {
-  it('placeholder while the dev-mode worker bundle-eval bug is open', () => {
-    expect(true).toBe(true);
   });
 });

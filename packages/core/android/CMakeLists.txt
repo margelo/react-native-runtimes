@@ -10,6 +10,7 @@ add_library(
   ../cpp/HybridThreadedRuntimeFunctions.cpp
   ../cpp/nativecompose/threadedruntime/RuntimeFunctionJsi.cpp
   ../cpp/nativecompose/threadedruntime/RuntimeFunctionScheduler.cpp
+  ../cpp/nativecompose/threadedruntime/ThreadedRuntimeBindingsInstaller.cpp
 )
 
 target_include_directories(

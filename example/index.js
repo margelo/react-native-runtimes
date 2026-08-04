@@ -9,15 +9,12 @@ const {
 } = require('@react-native-runtimes/core');
 
 // Register threaded roots/callable modules in every runtime. Component modules
-// stay lazy; production runtime-specific entries are gated inside the generated
-// entry once the native runtime prelude is available.
+// stay lazy; runtime-specific entries are gated inside the generated entry via
+// __THREADED_RUNTIME_ENV__, which native injects before any script evaluates.
+// (Android debug workers bundle the generated entry directly, so this file
+// only runs on the main runtime there; release workers evaluate it via the
+// embedded app bundle.)
 require('./.threaded-runtime/entry');
-
-if (typeof __DEV__ !== 'undefined' && __DEV__) {
-  // Android debug loads secondary runtimes from Metro before the native prelude
-  // runs, so app-specific runtime entry files need an explicit dev fallback.
-  require('./index.business-runtime');
-}
 
 const currentRuntime = getCurrentRuntime();
 

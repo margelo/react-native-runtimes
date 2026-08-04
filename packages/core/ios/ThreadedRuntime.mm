@@ -397,6 +397,26 @@ static NSMutableSet<NSString *> *ThreadedRuntimeBundleLoadedRuntimeNames()
   return runtimeNames;
 }
 
+// Generous because in dev the first worker bundle request can trigger a full
+// Metro graph build.
+static const int64_t ThreadedRuntimeReadyTimeoutSeconds = 120;
+
+static NSString *ThreadedRuntimeWorkerBundleRootStorage = nil;
+
+static NSString *ThreadedRuntimeWorkerBundleRoot(void)
+{
+  return ThreadedRuntimeWorkerBundleRootStorage ?: @".threaded-runtime/entry";
+}
+
+static NSString *ThreadedRuntimeErrorJson(NSString *message)
+{
+  NSData *data = [NSJSONSerialization dataWithJSONObject:@{@"message" : message ?: @""}
+                                                 options:0
+                                                   error:nil];
+  NSString *json = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+  return json ?: @"{\"message\":\"Threaded runtime call failed\"}";
+}
+
 static dispatch_queue_t ThreadedRuntimeQueue()
 {
   static dispatch_queue_t queue;
@@ -572,13 +592,22 @@ static NSDictionary *configuredLaunchOptions;
 + (void)destroyRuntime:(NSString *)runtimeName
 {
   NSString *normalizedRuntimeName = [self normalizeRuntimeName:runtimeName];
+  NSArray<NSDictionary<NSString *, NSString *> *> *orphanedCalls = nil;
   @synchronized(self) {
     [ThreadedRuntimePendingHeadlessTasks() removeObjectForKey:normalizedRuntimeName];
+    orphanedCalls = [ThreadedRuntimePendingFunctionCalls()[normalizedRuntimeName] copy];
     [ThreadedRuntimePendingFunctionCalls() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimePendingSurfaces() removeObjectForKey:normalizedRuntimeName];
     [ThreadedRuntimeStartingRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeStartedRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeBundleLoadedRuntimeNames() removeObject:normalizedRuntimeName];
+  }
+  for (NSDictionary<NSString *, NSString *> *call in orphanedCalls) {
+    NSString *message = [NSString
+        stringWithFormat:@"Runtime \"%@\" was destroyed before the call ran", normalizedRuntimeName];
+    [self completeRuntimeFunctionCallWithCallId:call[@"callId"] ?: @""
+                                     resultJson:nil
+                                      errorJson:ThreadedRuntimeErrorJson(message)];
   }
   [ThreadedRuntimeHosts() removeObjectForKey:normalizedRuntimeName];
   [ThreadedRuntimeHostDelegates() removeObjectForKey:normalizedRuntimeName];
@@ -693,8 +722,46 @@ static NSDictionary *configuredLaunchOptions;
     [ThreadedRuntimeStartingRuntimeNames() removeObject:normalizedRuntimeName];
     [ThreadedRuntimeStartedRuntimeNames() addObject:normalizedRuntimeName];
   }
+  [self scheduleRuntimeReadyWatchdogWithRuntimeName:normalizedRuntimeName];
   [self flushHeadlessTasksWithRuntimeName:normalizedRuntimeName host:host];
   [self flushRuntimeFunctionCallsWithRuntimeName:normalizedRuntimeName host:host];
+}
+
+// If a started runtime never signals ready, its queued dispatch would hang
+// forever (the callable modules only exist once the entry evaluated). Reject
+// with a diagnosis instead.
++ (void)scheduleRuntimeReadyWatchdogWithRuntimeName:(NSString *)runtimeName
+{
+  dispatch_after(
+      dispatch_time(DISPATCH_TIME_NOW, ThreadedRuntimeReadyTimeoutSeconds * NSEC_PER_SEC),
+      ThreadedRuntimeQueue(),
+      ^{
+        NSArray<NSDictionary<NSString *, NSString *> *> *staleCalls = nil;
+        @synchronized(self) {
+          if ([ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:runtimeName] ||
+              ThreadedRuntimeHosts()[runtimeName] == nil) {
+            return;
+          }
+          [ThreadedRuntimePendingHeadlessTasks() removeObjectForKey:runtimeName];
+          staleCalls = [ThreadedRuntimePendingFunctionCalls()[runtimeName] copy];
+          [ThreadedRuntimePendingFunctionCalls() removeObjectForKey:runtimeName];
+        }
+        NSString *message = [NSString
+            stringWithFormat:
+                @"Runtime \"%@\" started but its JS never signaled ready within %llds. The "
+                @"bundle it evaluated likely does not register the threaded runtime entry "
+                @"(check what the bundler serves for \"%@.bundle\").",
+                runtimeName,
+                (long long)ThreadedRuntimeReadyTimeoutSeconds,
+                ThreadedRuntimeWorkerBundleRoot()];
+        NSLog(@"[ThreadedRuntime] %@", message);
+        RCTLogError(@"[ThreadedRuntime] %@", message);
+        for (NSDictionary<NSString *, NSString *> *call in staleCalls) {
+          [self completeRuntimeFunctionCallWithCallId:call[@"callId"] ?: @""
+                                           resultJson:nil
+                                            errorJson:ThreadedRuntimeErrorJson(message)];
+        }
+      });
 }
 
 + (void)notifyRuntimeReadyWithRuntimeName:(NSString *)runtimeName
@@ -710,7 +777,17 @@ static NSDictionary *configuredLaunchOptions;
   if (alreadyReady) {
     return;
   }
+  NSLog(@"[ThreadedRuntime] runtime ready runtimeName=%@", normalizedRuntimeName);
+  RCTLogInfo(@"[ThreadedRuntime] runtime ready runtimeName=%@", normalizedRuntimeName);
   [self flushPendingSurfacesWithRuntimeName:normalizedRuntimeName];
+  RCTHost *host = nil;
+  @synchronized(self) {
+    host = ThreadedRuntimeHosts()[normalizedRuntimeName];
+  }
+  if (host != nil) {
+    [self flushHeadlessTasksWithRuntimeName:normalizedRuntimeName host:host];
+    [self flushRuntimeFunctionCallsWithRuntimeName:normalizedRuntimeName host:host];
+  }
   dispatch_async(dispatch_get_main_queue(), ^{
     [[NSNotificationCenter defaultCenter]
         postNotificationName:ThreadedRuntimeReadyNotification
@@ -757,7 +834,10 @@ static NSDictionary *configuredLaunchOptions;
 {
   NSArray<NSDictionary<NSString *, NSString *> *> *tasks;
   @synchronized(self) {
-    if (![ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName]) {
+    // Hold dispatch until the runtime's bundle evaluated and registered its
+    // callable modules (notifyRuntimeReady), not just until the host started.
+    if (![ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName] ||
+        ![ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:runtimeName]) {
       return;
     }
     tasks = [ThreadedRuntimePendingHeadlessTasks()[runtimeName] copy];
@@ -785,7 +865,10 @@ static NSDictionary *configuredLaunchOptions;
 {
   NSArray<NSDictionary<NSString *, NSString *> *> *calls;
   @synchronized(self) {
-    if (![ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName]) {
+    // Hold dispatch until the runtime's bundle evaluated and registered its
+    // callable modules (notifyRuntimeReady), not just until the host started.
+    if (![ThreadedRuntimeStartedRuntimeNames() containsObject:runtimeName] ||
+        ![ThreadedRuntimeBundleLoadedRuntimeNames() containsObject:runtimeName]) {
       return;
     }
     calls = [ThreadedRuntimePendingFunctionCalls()[runtimeName] copy];
@@ -831,7 +914,7 @@ static NSDictionary *configuredLaunchOptions;
   RCTHostBundleURLProvider bundleURLProvider = ^NSURL *_Nullable {
     NSURL *url = [weakDelegate bundleURL];
     if (url != nil) {
-      return url;
+      return [ThreadedRuntime workerBundleURLForAppBundleURL:url];
     }
     Class devLauncherClass = NSClassFromString(@"EXDevLauncherController");
     if (devLauncherClass != nil) {
@@ -842,7 +925,7 @@ static NSDictionary *configuredLaunchOptions;
         if ([controller respondsToSelector:sourceUrlSel]) {
           NSURL *devLauncherURL = ((NSURL *(*)(id, SEL))objc_msgSend)(controller, sourceUrlSel);
           if (devLauncherURL != nil) {
-            return devLauncherURL;
+            return [ThreadedRuntime workerBundleURLForAppBundleURL:devLauncherURL];
           }
         }
       }
@@ -881,6 +964,29 @@ static NSDictionary *configuredLaunchOptions;
     ThreadedRuntimeTurboModuleDelegates()[runtimeName] = turboModuleDelegate;
     return host;
   }
+}
+
++ (void)setWorkerBundleRoot:(NSString *)workerBundleRoot
+{
+  ThreadedRuntimeWorkerBundleRootStorage = [workerBundleRoot copy];
+}
+
+// Dev-only rewrite: workers bundle the generated worker entry instead of the
+// app entry, so they register runtime functions and threaded components
+// without booting the app (and without picking up whatever a test harness
+// serves for the app entry). Release file:// URLs pass through untouched —
+// the embedded app bundle is gated by __THREADED_RUNTIME_ENV__.
++ (NSURL *)workerBundleURLForAppBundleURL:(NSURL *)url
+{
+  if (url == nil || ![url.scheme.lowercaseString hasPrefix:@"http"]) {
+    return url;
+  }
+  NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+  if (components == nil || ![components.path hasSuffix:@".bundle"]) {
+    return url;
+  }
+  components.path = [NSString stringWithFormat:@"/%@.bundle", ThreadedRuntimeWorkerBundleRoot()];
+  return components.URL ?: url;
 }
 
 + (NSString *)normalizeRuntimeName:(NSString *)runtimeName

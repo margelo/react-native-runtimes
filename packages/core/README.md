@@ -102,6 +102,23 @@ The wrapper writes `.threaded-runtime/entry.js` and adds the generated directory
 to Metro's `watchFolders`. It also discovers root-level runtime entry files
 named `index.<runtime>.ts` and emits static conditional requires for them.
 
+In debug builds, secondary runtimes bundle this generated entry directly
+(`.threaded-runtime/entry.bundle` from Metro) instead of the app entry, so
+workers register runtime functions and threaded components without booting
+the app. Release builds evaluate the embedded app bundle, gated by
+`__THREADED_RUNTIME_ENV__` inside the generated entry. If you change
+`generatedDir`/`generatedEntry`, mirror it on the native side once at startup:
+
+```kotlin
+// Android
+ThreadedRuntime.setWorkerJsMainModulePath("custom-dir/custom-entry")
+```
+
+```objc
+// iOS
+[ThreadedRuntime setWorkerBundleRoot:@"custom-dir/custom-entry"];
+```
+
 Add the generated directory to `.gitignore`:
 
 ```gitignore
