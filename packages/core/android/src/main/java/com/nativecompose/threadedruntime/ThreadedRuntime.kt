@@ -3,6 +3,7 @@ package com.nativecompose.threadedruntime
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactPackage
 import com.facebook.react.bridge.JSBundleLoader
@@ -31,6 +32,7 @@ import java.util.UUID
 
 object ThreadedRuntime {
   const val DEFAULT_RUNTIME_NAME = "background-list"
+  const val MAIN_RUNTIME_NAME = "main"
   const val DEFAULT_BUSINESS_RUNTIME_NAME = "business-runtime"
   const val DEFAULT_HOST_APP_NAME = "ThreadedRuntimeHost"
   const val DEFAULT_RUNTIME_KIND = "threaded-runtime"
@@ -202,6 +204,43 @@ object ThreadedRuntime {
     val normalizedRuntimeName = runtimeName.orDefaultRuntimeName()
     val callId = UUID.randomUUID().toString()
     val appContext = context.applicationContext
+
+    // "main" must route to the application's existing main ReactHost. Creating
+    // a new host named "main" (the generic path below) produces a runtime with
+    // fresh module state where main-owned values (session bridges, installed
+    // handlers, etc.) are missing — calls "succeed" against the wrong runtime.
+    // This mirrors the C++ dispatcher registry route, but also covers calls
+    // that arrive before the main runtime registered itself there.
+    if (normalizedRuntimeName == MAIN_RUNTIME_NAME) {
+      val mainHost = (appContext as? ReactApplication)?.reactHost
+      if (mainHost != null) {
+        val request = RuntimeFunctionCallRequest(functionId, argsJson ?: "[]", callId)
+        synchronized(lock) { pendingRuntimeFunctionPromises[callId] = promise }
+        dispatchExecutor.execute {
+          try {
+            invokeRuntimeFunctionCall(mainHost, MAIN_RUNTIME_NAME, request)
+          } catch (error: Throwable) {
+            completeRuntimeFunctionCall(
+                callId,
+                null,
+                "{\"message\":\"${jsonEscape(error.message ?: "Runtime function dispatch failed")}\"}")
+            Log.e(
+                LOG_TAG,
+                "runtime function dispatch to main host failed functionId=$functionId",
+                error,
+            )
+          }
+        }
+        Log.i(
+            LOG_TAG,
+            "runtime function routed to main host functionId=$functionId callId=$callId")
+        return
+      }
+      Log.w(
+          LOG_TAG,
+          "ReactApplication main host unavailable; falling back to a runtime named \"main\"")
+    }
+
     synchronized(lock) {
       pendingRuntimeFunctionPromises[callId] = promise
       pendingRuntimeFunctionCalls
@@ -429,9 +468,13 @@ object ThreadedRuntime {
   }
 
   private fun resumeHost(host: ReactHost, activity: Activity?) {
-    if (activity != null) {
-      host.onHostResume(activity, activity as? DefaultHardwareBackBtnHandler)
-    }
+    // Resume even with no Activity: a worker runtime is headless, and until
+    // onHostResume moves the host to RESUMED, React Native's JavaTimerManager
+    // stays paused (isPaused starts true), so every JS timer on the runtime
+    // hangs forever — setTimeout, whatwg-fetch's response dispatch, retry
+    // backoffs. Both ReactHostImpl.onHostResume overloads accept a null
+    // Activity.
+    host.onHostResume(activity, activity as? DefaultHardwareBackBtnHandler)
   }
 
   private fun buildReactPackages(options: RuntimeOptions): List<ReactPackage> {
