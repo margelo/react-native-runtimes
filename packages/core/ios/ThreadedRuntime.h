@@ -10,6 +10,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)configureWithReactNativeDelegate:(id<RCTReactNativeFactoryDelegate>)delegate
                            launchOptions:(nullable NSDictionary *)launchOptions;
+// Metro path (relative to the project root) of the generated worker entry that
+// secondary runtimes bundle in dev. Defaults to ".threaded-runtime/entry";
+// mirror the metro plugin's generatedDir/generatedEntry when customized.
++ (void)setWorkerBundleRoot:(NSString *)workerBundleRoot;
 + (void)prewarmRuntime:(nullable NSString *)runtimeName;
 + (void)prewarmRuntime:(nullable NSString *)runtimeName
                   kind:(nullable NSString *)kind

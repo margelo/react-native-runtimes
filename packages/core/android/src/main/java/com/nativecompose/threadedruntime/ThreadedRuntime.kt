@@ -24,7 +24,6 @@ import com.facebook.react.runtime.ReactHostImpl
 import com.facebook.react.runtime.hermes.HermesInstance
 import com.facebook.react.shell.MainReactPackage
 import com.facebook.react.uimanager.ThemedReactContext
-import java.io.File
 import java.lang.reflect.Method
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -40,6 +39,14 @@ object ThreadedRuntime {
   private const val HEADLESS_TASK_RUNNER_MODULE = "ThreadedRuntimeHeadlessTaskRunner"
   private const val RUNTIME_FUNCTION_RUNNER_MODULE = "ThreadedRuntimeFunctionRunner"
   private const val LOG_TAG = "ThreadedRuntime"
+  // Generous because in dev the first worker bundle request can trigger a full
+  // Metro graph build.
+  private const val RUNTIME_READY_TIMEOUT_MS = 120_000L
+  // Metro path of the worker entry (relative to the project root), generated
+  // by @react-native-runtimes/core/metro. Only used in dev; release loads the
+  // embedded app bundle. Override via setWorkerJsMainModulePath when the metro
+  // plugin is configured with a custom generatedDir/generatedEntry.
+  private const val DEFAULT_WORKER_JS_MAIN_MODULE_PATH = ".threaded-runtime/entry"
 
   private data class HeadlessTaskRequest(
       val taskName: String,
@@ -66,12 +73,25 @@ object ThreadedRuntime {
   private val pendingRuntimeFunctionPromises = mutableMapOf<String, Promise>()
   private val startingRuntimes = mutableSetOf<String>()
   private val startedRuntimes = mutableSetOf<String>()
+  // Runtimes whose JS finished evaluating and registered the threaded runtime
+  // entry (signaled via notifyRuntimeReady from @react-native-runtimes/core).
+  private val readyRuntimes = mutableSetOf<String>()
   private val dispatchExecutor =
       Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ThreadedRuntimeDispatch").apply { isDaemon = true }
       }
+  private val readyWatchdogExecutor =
+      Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "ThreadedRuntimeReadyWatchdog").apply { isDaemon = true }
+      }
   private var extraReactPackagesProvider: (() -> List<ReactPackage>)? = null
   private var mainReactPackagesProvider: (() -> List<ReactPackage>)? = null
+  @Volatile private var workerJsMainModulePath: String = DEFAULT_WORKER_JS_MAIN_MODULE_PATH
+
+  @JvmStatic
+  fun setWorkerJsMainModulePath(path: String) {
+    workerJsMainModulePath = path
+  }
 
   @JvmStatic
   fun setMainReactPackagesProvider(provider: (() -> List<ReactPackage>)?) {
@@ -150,15 +170,24 @@ object ThreadedRuntime {
 
   fun destroyRuntime(runtimeName: String) {
     val normalizedRuntimeName = runtimeName.orDefaultRuntimeName()
+    val orphanedCalls: List<RuntimeFunctionCallRequest>
     val host =
         synchronized(lock) {
           pendingHeadlessTasks.remove(normalizedRuntimeName)
-          pendingRuntimeFunctionCalls.remove(normalizedRuntimeName)
+          orphanedCalls =
+              pendingRuntimeFunctionCalls.remove(normalizedRuntimeName)?.toList().orEmpty()
           startingRuntimes.remove(normalizedRuntimeName)
           startedRuntimes.remove(normalizedRuntimeName)
+          readyRuntimes.remove(normalizedRuntimeName)
           runtimeOptions.remove(normalizedRuntimeName)
           hosts.remove(normalizedRuntimeName)
         }
+    orphanedCalls.forEach { request ->
+      completeRuntimeFunctionCall(
+          request.callId,
+          null,
+          "{\"message\":\"Runtime \\\"$normalizedRuntimeName\\\" was destroyed before the call ran\"}")
+    }
     host?.destroy("destroyRuntime($normalizedRuntimeName)", null)
   }
 
@@ -293,10 +322,16 @@ object ThreadedRuntime {
 
     val delegate =
         DefaultReactHostDelegate(
-            jsMainModulePath = "index",
-            jsBundleLoader = ThreadedRuntimeBundleLoader(context, runtimeName, options),
+            // Dev-only: dev support derives the Metro URL from this, so debug
+            // workers bundle the generated worker entry instead of the app
+            // entry. Release loads the embedded app bundle via the loader.
+            jsMainModulePath = workerJsMainModulePath,
+            jsBundleLoader = ThreadedRuntimeBundleLoader(context),
             reactPackages = buildReactPackages(options),
             jsRuntimeFactory = HermesInstance(),
+            // Injects __THREADED_RUNTIME_ENV__ before any script evaluates,
+            // regardless of where the bundle comes from.
+            bindingsInstaller = ThreadedRuntimeBindingsInstaller(runtimeName, options.kind),
             turboModuleManagerDelegateBuilder = DefaultTurboModuleManagerDelegate.Builder(),
             exceptionHandler = { throw it },
         )
@@ -341,6 +376,7 @@ object ThreadedRuntime {
           startingRuntimes.remove(runtimeName)
           startedRuntimes.add(runtimeName)
         }
+        scheduleRuntimeReadyWatchdog(runtimeName)
         flushHeadlessTasks(runtimeName, host)
         flushRuntimeFunctionCalls(runtimeName, host)
       } catch (error: Throwable) {
@@ -350,10 +386,62 @@ object ThreadedRuntime {
     }
   }
 
+  /**
+   * Called from JS (via the bridge module) once the runtime's bundle finished
+   * evaluating and @react-native-runtimes/core registered its callable
+   * modules. Dispatch into a runtime is held until this fires: the callable
+   * modules only exist after the entry evaluated, and dispatching earlier
+   * fails on the worker's JS thread without ever settling the caller's
+   * promise.
+   */
+  @JvmStatic
+  fun notifyRuntimeReady(runtimeName: String?) {
+    val normalizedRuntimeName = runtimeName.orDefaultRuntimeName()
+    val host =
+        synchronized(lock) {
+          if (!readyRuntimes.add(normalizedRuntimeName)) {
+            return
+          }
+          hosts[normalizedRuntimeName]
+        }
+    Log.i(LOG_TAG, "runtime ready runtimeName=$normalizedRuntimeName")
+    if (host != null) {
+      flushHeadlessTasks(normalizedRuntimeName, host)
+      flushRuntimeFunctionCalls(normalizedRuntimeName, host)
+    }
+  }
+
+  private fun scheduleRuntimeReadyWatchdog(runtimeName: String) {
+    readyWatchdogExecutor.schedule(
+        {
+          val staleCalls =
+              synchronized(lock) {
+                if (readyRuntimes.contains(runtimeName) || !hosts.containsKey(runtimeName)) {
+                  return@schedule
+                }
+                pendingHeadlessTasks.remove(runtimeName)
+                pendingRuntimeFunctionCalls.remove(runtimeName)?.toList().orEmpty()
+              }
+          val message =
+              "Runtime \"$runtimeName\" started but its JS never signaled ready within " +
+                  "${RUNTIME_READY_TIMEOUT_MS / 1000}s. The bundle it evaluated likely does " +
+                  "not register the threaded runtime entry (check what the bundler serves " +
+                  "for \"$workerJsMainModulePath.bundle\")."
+          Log.e(LOG_TAG, message)
+          staleCalls.forEach { request ->
+            completeRuntimeFunctionCall(
+                request.callId, null, "{\"message\":\"${jsonEscape(message)}\"}")
+          }
+        },
+        RUNTIME_READY_TIMEOUT_MS,
+        TimeUnit.MILLISECONDS,
+    )
+  }
+
   private fun flushHeadlessTasks(runtimeName: String, host: ReactHost) {
     val requests =
         synchronized(lock) {
-          if (!startedRuntimes.contains(runtimeName)) {
+          if (!startedRuntimes.contains(runtimeName) || !readyRuntimes.contains(runtimeName)) {
             return
           }
           pendingHeadlessTasks.remove(runtimeName)?.toList().orEmpty()
@@ -380,7 +468,7 @@ object ThreadedRuntime {
   private fun flushRuntimeFunctionCalls(runtimeName: String, host: ReactHost) {
     val requests =
         synchronized(lock) {
-          if (!startedRuntimes.contains(runtimeName)) {
+          if (!startedRuntimes.contains(runtimeName) || !readyRuntimes.contains(runtimeName)) {
             return
           }
           pendingRuntimeFunctionCalls.remove(runtimeName)?.toList().orEmpty()
@@ -530,33 +618,15 @@ object ThreadedRuntime {
       value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
 }
 
+// Release-only in practice: with dev support enabled (debug + Metro running),
+// ReactHostImpl bypasses the delegate loader and fetches jsMainModulePath from
+// Metro instead. __THREADED_RUNTIME_ENV__ comes from
+// ThreadedRuntimeBindingsInstaller in both cases, before any script evaluates.
 private class ThreadedRuntimeBundleLoader(
     private val context: Context,
-    private val runtimeName: String,
-    private val options: ThreadedRuntime.RuntimeOptions,
 ) : JSBundleLoader() {
   override fun loadScript(delegate: JSBundleLoaderDelegate): String {
-    val prelude = File(context.cacheDir, "threaded-runtime-env-${safeFileName(runtimeName)}.js")
-    prelude.writeText(
-        """
-        var __threadedRuntimeGlobal =
-          typeof globalThis !== 'undefined' ? globalThis : Function('return this')();
-        __threadedRuntimeGlobal.__THREADED_RUNTIME_ENV__ = {
-          kind: ${jsString(options.kind)},
-          runtimeName: ${jsString(runtimeName)}
-        };
-        """.trimIndent(),
-    )
-
-    val sourceUrl = prelude.absolutePath
-    delegate.loadScriptFromFile(prelude.absolutePath, sourceUrl, false)
     delegate.loadScriptFromAssets(context.assets, "assets://index.android.bundle", true)
     return "assets://index.android.bundle"
   }
-
-  private fun jsString(value: String): String =
-      "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-
-  private fun safeFileName(value: String): String =
-      value.replace(Regex("[^A-Za-z0-9_.-]"), "_")
 }

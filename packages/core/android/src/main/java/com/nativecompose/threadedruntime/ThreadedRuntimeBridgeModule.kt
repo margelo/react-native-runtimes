@@ -113,6 +113,16 @@ class ThreadedRuntimeBridgeModule(private val reactContext: ReactApplicationCont
   }
 
   @ReactMethod
+  fun notifyRuntimeReady(runtimeName: String?, promise: Promise) {
+    try {
+      ThreadedRuntime.notifyRuntimeReady(runtimeName)
+      promise.resolve(null)
+    } catch (error: Throwable) {
+      promise.reject("ERR_THREADED_RUNTIME_READY", error)
+    }
+  }
+
+  @ReactMethod
   fun destroyRuntime(runtimeName: String?, promise: Promise) {
     try {
       ThreadedRuntime.destroyRuntime(runtimeName.orDefaultRuntimeName())
