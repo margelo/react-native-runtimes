@@ -13,13 +13,13 @@ The package owns the JS registry and host API:
   `@react-native-runtimes/core/metro`
 - `registerLazyThreadedComponent(name, loadComponent)`
 - `registerThreadedComponent(name, Component)`
-- `registerThreadedHeadlessTask(name, task)`
 - `runtimeFunction(fn)`
 - `call(runtimeFunction).on(runtimeName)(...args)`
+- `schedule(runtimeFunction).on(runtimeName)(...args)`
 - `usingRuntime(runtimeName).run(() => runtimeFunctionCall(...))`
 - `ThreadedReactSurface`
 - `ThreadedRuntimeHost`
-- `ThreadedRuntime.prewarm/preload/runHeadlessTask/run/destroy/destroyAll/getRuntimeNames`
+- `ThreadedRuntime.prewarm/preload/call/schedule/destroy/destroyAll/getRuntimeNames`
 
 ## Expo
 
@@ -82,18 +82,18 @@ npm install --save-dev @expo/config-plugins
 Add the Metro wrapper from this package to your app's `metro.config.js`:
 
 ```js
-const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
-const { withThreadedRuntime } = require('@react-native-runtimes/core/metro');
+const { getDefaultConfig, mergeConfig } = require("@react-native/metro-config");
+const { withThreadedRuntime } = require("@react-native-runtimes/core/metro");
 
 const config = {};
 
 module.exports = withThreadedRuntime(
   mergeConfig(getDefaultConfig(__dirname), config),
   {
-    roots: ['App.tsx', 'src'],
-    generatedDir: '.threaded-runtime',
-    generatedEntry: 'entry.js',
-  },
+    roots: ["App.tsx", "src"],
+    generatedDir: ".threaded-runtime",
+    generatedEntry: "entry.js",
+  }
 );
 ```
 
@@ -126,18 +126,18 @@ The generated entry registers lazy component loaders and the
 `ThreadedRuntimeHost` root:
 
 ```js
-import { AppRegistry } from 'react-native';
+import { AppRegistry } from "react-native";
 import {
   ThreadedRuntimeHost,
   registerLazyThreadedComponent,
-} from '@react-native-runtimes/core';
+} from "@react-native-runtimes/core";
 
 registerLazyThreadedComponent(
-  'MessageList',
-  () => require('../src/MessageList').MessageList,
+  "MessageList",
+  () => require("../src/MessageList").MessageList
 );
 
-AppRegistry.registerComponent('ThreadedRuntimeHost', () => ThreadedRuntimeHost);
+AppRegistry.registerComponent("ThreadedRuntimeHost", () => ThreadedRuntimeHost);
 ```
 
 You can split runtime-only startup code into root files:
@@ -164,7 +164,7 @@ import {
   OnRuntime,
   ThreadedScreen,
   threadedComponent,
-} from '@react-native-runtimes/core';
+} from "@react-native-runtimes/core";
 
 type MessageListProps = {
   conversationId: string;
@@ -194,10 +194,10 @@ runtime, use `ThreadedScreen`:
 
 ```tsx
 export const ConversationScreen = threadedComponent<ConversationScreenProps>(
-  'ConversationScreen',
+  "ConversationScreen",
   function ConversationScreen(props) {
     return <ConversationRoute {...props} />;
-  },
+  }
 );
 
 <ThreadedScreen
@@ -219,7 +219,7 @@ name or need to bypass the directive transform.
 You can also prewarm the runtime before rendering the screen:
 
 ```tsx
-import { ThreadedRuntime } from '@react-native-runtimes/core';
+import { ThreadedRuntime } from "@react-native-runtimes/core";
 
 await ThreadedRuntime.prewarm(`conversation-${conversationId}`);
 ```
@@ -227,52 +227,48 @@ await ThreadedRuntime.prewarm(`conversation-${conversationId}`);
 `prewarm` creates and starts the named secondary runtime without mounting a
 surface. `preload` is kept as a compatibility alias.
 
-## Headless Work On A Threaded Runtime
+## Background Work On A Threaded Runtime
 
 Prewarming starts the secondary runtime and loads the bundle, but it does not
-give you a clear app-level API for background work. Use headless tasks when you
-want to run JS on a named threaded runtime without mounting a view.
+give you a clear app-level API for background work. Use scheduled runtime
+functions when you want to run JS on a named threaded runtime without mounting a
+view and without waiting for a return value.
 
-Register the task in a module that is loaded by the threaded bundle. If you use
-the Metro wrapper, exporting this registration from one of the scanned roots is
-enough because `.threaded-runtime/entry` is loaded in the secondary runtime.
+Export a named runtime function from a module loaded by the threaded bundle. If
+you use the Metro wrapper, exporting it from one of the scanned roots is enough
+because `.threaded-runtime/entry` registers runtime functions in the secondary
+runtime.
 
 ```tsx
-import { registerThreadedHeadlessTask } from '@react-native-runtimes/core';
-import { messagesStore } from './messagesStore';
+import { runtimeFunction, schedule } from "@react-native-runtimes/core";
+import { messagesStore } from "./messagesStore";
 
-registerThreadedHeadlessTask<{
-  conversationId: string;
-  limit: number;
-}>('hydrateConversation', async ({ payload, runtimeName }) => {
-  const messages = await loadMessages(payload.conversationId, payload.limit);
-  await messagesStore.setSubtreeState(payload.conversationId, messages, true);
-  console.info(`Hydrated ${payload.conversationId} on ${runtimeName}`);
+export const hydrateConversation = runtimeFunction.named(
+  "messages.hydrateConversation",
+  async (payload: { conversationId: string; limit: number }) => {
+    const messages = await loadMessages(payload.conversationId, payload.limit);
+    await messagesStore.setSubtreeState(payload.conversationId, messages, true);
+  }
+);
+```
+
+Schedule it from the main runtime:
+
+```tsx
+await schedule(hydrateConversation).on("conversation-worker-runtime")({
+  conversationId,
+  limit: 50,
 });
 ```
 
-Dispatch it from the main runtime:
+`schedule(...)` starts or reuses the named runtime and asks that runtime to
+invoke the registered function. If the runtime is still starting, native queues
+the function and flushes it when that runtime is ready. The returned promise
+resolves when native accepts the scheduled work; it does not wait for the async
+function body to finish. Pass durable output through shared native state,
+storage, or native modules.
 
-```tsx
-import { ThreadedRuntime } from '@react-native-runtimes/core';
-
-await ThreadedRuntime.runHeadlessTask('hydrateConversation', {
-  runtimeName: 'conversation-worker-runtime',
-  payload: {
-    conversationId,
-    limit: 50,
-  },
-});
-```
-
-`runHeadlessTask` starts or reuses the named runtime and asks that runtime to
-invoke the registered task. If the runtime is still starting, native queues the
-task and flushes it when that runtime is ready. The returned promise resolves
-when native accepts the dispatch; it does not wait for the async task body to
-finish. Pass durable output through shared native state, storage, or native
-modules.
-
-Headless tasks are useful for:
+Scheduled runtime functions are useful for:
 
 - warming shared stores before a threaded screen opens
 - fetching or decoding data away from the main JS runtime
@@ -280,7 +276,7 @@ Headless tasks are useful for:
 - keeping a runtime hot without attaching a `Threaded` surface
 
 If you only need to make startup faster, `ThreadedRuntime.prewarm(runtimeName)`
-is still enough. Use `runHeadlessTask` when you need actual JS work to execute.
+is still enough. Use `schedule(...)` when you need actual JS work to execute.
 
 ## Await Runtime Functions
 
@@ -297,7 +293,7 @@ body:
 
 ```tsx
 async function sum(a: number, b: number) {
-  'background';
+  "background";
   return a + b;
 }
 
@@ -309,14 +305,14 @@ function with a scheduled alias:
 
 ```tsx
 export const sum_ = runtimeFunction.withId(
-  'src/math.sum_',
+  "src/math.sum_",
   async function sum(a: number, b: number) {
-    'background';
+    "background";
     return a + b;
-  },
+  }
 );
 
-const sum = call(sum_).on('background');
+const sum = call(sum_).on("background");
 const result = await sum(5, 1);
 ```
 
@@ -332,7 +328,7 @@ When the caller should choose the runtime, export a runtime function and schedul
 it with `call(fn).on(runtimeName)(...args)`:
 
 ```tsx
-import { call, runtimeFunction } from '@react-native-runtimes/core';
+import { call, runtimeFunction } from "@react-native-runtimes/core";
 
 function fibonacciNumber(n: number) {
   if (n < 2) {
@@ -352,14 +348,14 @@ export const fibonacci = runtimeFunction((n: number) => {
   };
 });
 
-const result = await call(fibonacci).on('fibonacci-worker-runtime')(38);
+const result = await call(fibonacci).on("fibonacci-worker-runtime")(38);
 ```
 
 The `call(fn).on(runtimeName)(...args)` form is compile-time syntax. The Metro
 transformer rewrites it before the app runs:
 
 ```tsx
-await fibonacci.runOn('fibonacci-worker-runtime', 38);
+await fibonacci.runOn("fibonacci-worker-runtime", 38);
 ```
 
 ### Function Directive Details
@@ -370,12 +366,12 @@ the first statement in the function body:
 
 ```tsx
 async function refreshCache(key: string) {
-  'background';
+  "background";
   await cacheStore.hydrate();
   return cacheStore.get(key);
 }
 
-const value = await refreshCache('settings');
+const value = await refreshCache("settings");
 ```
 
 That source keeps call sites ordinary while still scheduling the work on the
@@ -384,15 +380,15 @@ the original function with a scheduled alias:
 
 ```tsx
 export const refreshCache_ = runtimeFunction.withId(
-  'src/cache.refreshCache_',
+  "src/cache.refreshCache_",
   async function refreshCache(key: string) {
-    'background';
+    "background";
     await cacheStore.hydrate();
     return cacheStore.get(key);
-  },
+  }
 );
 
-const refreshCache = call(refreshCache_).on('background');
+const refreshCache = call(refreshCache_).on("background");
 ```
 
 Prefer this shortcut for fixed-runtime helpers. Prefer
@@ -412,8 +408,8 @@ export name, then generates a registration that looks like this:
 
 ```tsx
 registerRuntimeFunction(
-  'src/examples/fibonacciRuntimeFunction.fibonacci',
-  () => require('./src/examples/fibonacciRuntimeFunction').fibonacci,
+  "src/examples/fibonacciRuntimeFunction.fibonacci",
+  () => require("./src/examples/fibonacciRuntimeFunction").fibonacci
 );
 ```
 
@@ -426,14 +422,14 @@ The `call(...).on(...)` helper accepts one exported runtime function and forward
 the arguments to that function on the target runtime:
 
 ```tsx
-await call(fibonacci).on('fibonacci-worker-runtime')(38);
+await call(fibonacci).on("fibonacci-worker-runtime")(38);
 ```
 
 For a fixed-runtime helper, use a top-level function directive:
 
 ```tsx
 async function sum(a: number, b: number) {
-  'background';
+  "background";
   return a + b;
 }
 
@@ -443,9 +439,9 @@ await sum(5, 1);
 The callback form is still supported when you prefer the runtime-first shape:
 
 ```tsx
-import { usingRuntime } from '@react-native-runtimes/core';
+import { usingRuntime } from "@react-native-runtimes/core";
 
-await usingRuntime('fibonacci-worker-runtime').run(() => fibonacci(38));
+await usingRuntime("fibonacci-worker-runtime").run(() => fibonacci(38));
 ```
 
 For explicit stable ids, use `runtimeFunction.named` or
@@ -453,10 +449,10 @@ For explicit stable ids, use `runtimeFunction.named` or
 
 ```tsx
 export const fibonacci = runtimeFunction.named(
-  'examples.fibonacci',
+  "examples.fibonacci",
   (n: number) => {
     return fibonacciNumber(n);
-  },
+  }
 );
 ```
 
@@ -472,23 +468,23 @@ Current constraints:
   before calling them
 - synchronous functions avoid the extra Promise hop on the target runtime
 
-## Native Headless Dispatch
+## Native Schedule
 
-Native code can dispatch the same registered headless tasks. The caller chooses
-which named runtime handles the task. If that runtime has been prewarmed but is
-not ready yet, the dispatch is queued and flushed after startup. If it has not
-been created yet, native creates and starts it.
+Native code can schedule the same registered runtime functions by id. The caller
+chooses which named runtime handles the function. If that runtime has been
+prewarmed but is not ready yet, the function is queued and flushed after
+startup. If it has not been created yet, native creates and starts it.
 
 Kotlin:
 
 ```kotlin
 import com.nativecompose.threadedruntime.ThreadedRuntime
 
-ThreadedRuntime.dispatchHeadlessTask(
+ThreadedRuntime.schedule(
   context = applicationContext,
   runtimeName = "conversation-worker-runtime",
-  taskName = "hydrateConversation",
-  payloadJson = """{"conversationId":"inbox","limit":50}""",
+  functionId = "messages.hydrateConversation",
+  argsJson = """[{"conversationId":"inbox","limit":50}]""",
 )
 ```
 
@@ -497,10 +493,10 @@ Swift:
 ```swift
 import NativeComposeThreadedRuntime
 
-ThreadedRuntime.dispatchHeadlessTask(
+ThreadedRuntime.schedule(
   withRuntimeName: "conversation-worker-runtime",
-  taskName: "hydrateConversation",
-  payloadJson: #"{"conversationId":"inbox","limit":50}"#
+  functionId: "messages.hydrateConversation",
+  argsJson: #"[{"conversationId":"inbox","limit":50}]"#
 )
 ```
 
@@ -509,12 +505,12 @@ C++ on Android:
 ```cpp
 #include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
 
-nativecompose::threadedruntime::dispatchHeadlessTask(
+nativecompose::threadedruntime::schedule(
     env,
     applicationContext,
     "conversation-worker-runtime",
-    "hydrateConversation",
-    R"({"conversationId":"inbox","limit":50})");
+    "messages.hydrateConversation",
+    R"([{"conversationId":"inbox","limit":50}])");
 ```
 
 C++/Objective-C++ on Apple platforms:
@@ -522,10 +518,10 @@ C++/Objective-C++ on Apple platforms:
 ```cpp
 #include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
 
-nativecompose::threadedruntime::dispatchHeadlessTask(
+nativecompose::threadedruntime::schedule(
     "conversation-worker-runtime",
-    "hydrateConversation",
-    R"({"conversationId":"inbox","limit":50})");
+    "messages.hydrateConversation",
+    R"([{"conversationId":"inbox","limit":50}])");
 ```
 
 Generator rules:
@@ -542,7 +538,7 @@ Generator rules:
 The Metro helper is exported from the package as:
 
 ```js
-const { withThreadedRuntime } = require('@react-native-runtimes/core/metro');
+const { withThreadedRuntime } = require("@react-native-runtimes/core/metro");
 ```
 
 In same-bundle mode the generated lazy registry avoids eagerly initializing
@@ -558,23 +554,23 @@ code must not mount the main app by itself. This is useful when you are not usin
 the Metro generated registry.
 
 ```tsx
-import { registerThreadedComponent } from '@react-native-runtimes/core';
+import { registerThreadedComponent } from "@react-native-runtimes/core";
 
 function ExpensivePanel({ runtimeName }: { runtimeName?: string }) {
-  return <Panel title={runtimeName ?? 'threaded'} />;
+  return <Panel title={runtimeName ?? "threaded"} />;
 }
 
-registerThreadedComponent('ExpensivePanel', ExpensivePanel);
+registerThreadedComponent("ExpensivePanel", ExpensivePanel);
 ```
 
 ## Mount A Threaded Surface
 
 ```tsx
-import { ThreadedReactSurface } from '@react-native-runtimes/core';
+import { ThreadedReactSurface } from "@react-native-runtimes/core";
 
 <ThreadedReactSurface
   componentName="ExpensivePanel"
-  initialProps={{ mode: 'compare' }}
+  initialProps={{ mode: "compare" }}
   runtimeName="analytics-runtime"
   style={{ flex: 1 }}
   surfaceKey="analytics-panel"
@@ -600,8 +596,8 @@ const {
 if (!isMainRuntime()) {
   require('./App'); // component registrations
   AppRegistry.registerComponent(
-    'ThreadedRuntimeHost',
-    () => require('@react-native-runtimes/core').ThreadedRuntimeHost,
+    "ThreadedRuntimeHost",
+    () => require("@react-native-runtimes/core").ThreadedRuntimeHost
   );
 }
 ```
@@ -624,8 +620,8 @@ The native module exposes:
 - `prewarmRuntimeWithOptions(runtimeName, kind, useMainNativeModules)`
 - `prewarmBusinessRuntime(runtimeName)`
 - `preloadRuntime(runtimeName)`
-- `dispatchHeadlessTask(runtimeName, taskName, payloadJson)`
-- `runHeadlessTask(runtimeName, taskName, payloadJson)`
+- `call(runtimeName, functionId, argsJson)`
+- `schedule(runtimeName, functionId, argsJson)`
 - `destroyRuntime(runtimeName)`
 - `destroyAllRuntimes()`
 - `getRuntimeNames()`
@@ -677,7 +673,7 @@ import { getCurrentRuntime } from '@react-native-runtimes/core';
 if (getCurrentRuntime().kind === 'business-runtime') {
   require('./src/businessRuntimeEntry');
 } else {
-  require('./src/mainRuntimeEntry');
+  require("./src/mainRuntimeEntry");
 }
 ```
 

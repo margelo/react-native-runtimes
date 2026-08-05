@@ -1,19 +1,20 @@
 ---
-title: Headless hydration before opening a screen
-description: Prewarm a runtime, run a headless task to load data, then open the screen against a populated store.
+title: Hydrate before opening a screen
+description: Prewarm a runtime, schedule a runtime function to load data, then open the screen against a populated store.
 ---
 
 ```tsx
+import { schedule } from '@react-native-runtimes/core';
+import { ThreadedRuntime } from '@react-native-runtimes/core';
+import { hydrateConversation } from './hydrateConversation';
+
 async function prepareAndOpen(conversationId: string) {
   const runtimeName = `conversation-${conversationId}-runtime`;
 
   await ThreadedRuntime.prewarm(runtimeName);
-  await ThreadedRuntime.runHeadlessTask('hydrateConversation', {
-    runtimeName,
-    payload: {
-      conversationId,
-      limit: 50,
-    },
+  await schedule(hydrateConversation).on(runtimeName)({
+    conversationId,
+    limit: 50,
   });
 
   navigation.navigate('Conversation', { conversationId });
@@ -23,7 +24,7 @@ async function prepareAndOpen(conversationId: string) {
 The flow:
 
 1. **Prewarm.** The runtime starts if not already running.
-2. **Hydrate.** A headless task fetches the first page of messages and writes them through the shared store.
+2. **Hydrate.** A scheduled runtime function fetches the first page of messages and writes them through the shared store.
 3. **Navigate.** The user lands on the conversation; the screen renders against an already-populated store.
 
 The screen has no spinner because the data is already there when it mounts.

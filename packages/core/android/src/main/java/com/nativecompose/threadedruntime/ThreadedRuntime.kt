@@ -35,19 +35,13 @@ object ThreadedRuntime {
   const val DEFAULT_HOST_APP_NAME = "ThreadedRuntimeHost"
   const val DEFAULT_RUNTIME_KIND = "threaded-runtime"
   const val BUSINESS_RUNTIME_KIND = "business-runtime"
-  private const val HEADLESS_TASK_RUNNER_MODULE = "ThreadedRuntimeHeadlessTaskRunner"
   private const val RUNTIME_FUNCTION_RUNNER_MODULE = "ThreadedRuntimeFunctionRunner"
   private const val LOG_TAG = "ThreadedRuntime"
 
-  private data class HeadlessTaskRequest(
-      val taskName: String,
-      val payloadJson: String,
-  )
-
-  private data class RuntimeFunctionCallRequest(
+  private data class RuntimeFunctionRequest(
       val functionId: String,
       val argsJson: String,
-      val callId: String,
+      val callId: String?,
   )
 
   internal data class RuntimeOptions(
@@ -58,9 +52,8 @@ object ThreadedRuntime {
   private val lock = Any()
   private val hosts = mutableMapOf<String, ReactHost>()
   private val runtimeOptions = mutableMapOf<String, RuntimeOptions>()
-  private val pendingHeadlessTasks = mutableMapOf<String, MutableList<HeadlessTaskRequest>>()
-  private val pendingRuntimeFunctionCalls =
-      mutableMapOf<String, MutableList<RuntimeFunctionCallRequest>>()
+  private val pendingRuntimeFunctionRequests =
+      mutableMapOf<String, MutableList<RuntimeFunctionRequest>>()
   private val pendingRuntimeFunctionPromises = mutableMapOf<String, Promise>()
   private val startingRuntimes = mutableSetOf<String>()
   private val startedRuntimes = mutableSetOf<String>()
@@ -150,8 +143,7 @@ object ThreadedRuntime {
     val normalizedRuntimeName = runtimeName.orDefaultRuntimeName()
     val host =
         synchronized(lock) {
-          pendingHeadlessTasks.remove(normalizedRuntimeName)
-          pendingRuntimeFunctionCalls.remove(normalizedRuntimeName)
+          pendingRuntimeFunctionRequests.remove(normalizedRuntimeName)
           startingRuntimes.remove(normalizedRuntimeName)
           startedRuntimes.remove(normalizedRuntimeName)
           runtimeOptions.remove(normalizedRuntimeName)
@@ -161,38 +153,7 @@ object ThreadedRuntime {
   }
 
   @JvmStatic
-  fun runHeadlessTask(
-      context: Context,
-      runtimeName: String,
-      taskName: String,
-      payloadJson: String,
-  ) = dispatchHeadlessTask(context, runtimeName, taskName, payloadJson)
-
-  @JvmStatic
-  fun dispatchHeadlessTask(
-      context: Context,
-      runtimeName: String?,
-      taskName: String,
-      payloadJson: String?,
-  ) {
-    val normalizedRuntimeName = runtimeName.orDefaultRuntimeName()
-    val appContext = context.applicationContext
-    synchronized(lock) {
-      pendingHeadlessTasks
-          .getOrPut(normalizedRuntimeName) { mutableListOf() }
-          .add(HeadlessTaskRequest(taskName, payloadJson ?: "null"))
-    }
-    dispatchExecutor.execute {
-      val host = ensureHost(appContext, null, normalizedRuntimeName)
-      startRuntimeAndFlush(normalizedRuntimeName, host)
-    }
-    Log.i(
-        LOG_TAG,
-        "headless task queued runtimeName=$normalizedRuntimeName taskName=$taskName")
-  }
-
-  @JvmStatic
-  fun callRuntimeFunction(
+  fun call(
       context: Context,
       runtimeName: String?,
       functionId: String,
@@ -204,9 +165,9 @@ object ThreadedRuntime {
     val appContext = context.applicationContext
     synchronized(lock) {
       pendingRuntimeFunctionPromises[callId] = promise
-      pendingRuntimeFunctionCalls
+      pendingRuntimeFunctionRequests
           .getOrPut(normalizedRuntimeName) { mutableListOf() }
-          .add(RuntimeFunctionCallRequest(functionId, argsJson ?: "[]", callId))
+          .add(RuntimeFunctionRequest(functionId, argsJson ?: "[]", callId))
     }
     dispatchExecutor.execute {
       val host = ensureHost(appContext, null, normalizedRuntimeName)
@@ -215,6 +176,29 @@ object ThreadedRuntime {
     Log.i(
         LOG_TAG,
         "runtime function queued runtimeName=$normalizedRuntimeName functionId=$functionId callId=$callId")
+  }
+
+  @JvmStatic
+  fun schedule(
+      context: Context,
+      runtimeName: String?,
+      functionId: String,
+      argsJson: String?,
+  ) {
+    val normalizedRuntimeName = runtimeName.orDefaultRuntimeName()
+    val appContext = context.applicationContext
+    synchronized(lock) {
+      pendingRuntimeFunctionRequests
+          .getOrPut(normalizedRuntimeName) { mutableListOf() }
+          .add(RuntimeFunctionRequest(functionId, argsJson ?: "[]", null))
+    }
+    dispatchExecutor.execute {
+      val host = ensureHost(appContext, null, normalizedRuntimeName)
+      startRuntimeAndFlush(normalizedRuntimeName, host)
+    }
+    Log.i(
+        LOG_TAG,
+        "runtime function scheduled runtimeName=$normalizedRuntimeName functionId=$functionId")
   }
 
   @JvmStatic
@@ -288,8 +272,7 @@ object ThreadedRuntime {
         }
 
     if (!shouldStart) {
-      flushHeadlessTasks(runtimeName, host)
-      flushRuntimeFunctionCalls(runtimeName, host)
+      flushRuntimeFunctionRequests(runtimeName, host)
       return
     }
 
@@ -302,8 +285,7 @@ object ThreadedRuntime {
           startingRuntimes.remove(runtimeName)
           startedRuntimes.add(runtimeName)
         }
-        flushHeadlessTasks(runtimeName, host)
-        flushRuntimeFunctionCalls(runtimeName, host)
+        flushRuntimeFunctionRequests(runtimeName, host)
       } catch (error: Throwable) {
         synchronized(lock) { startingRuntimes.remove(runtimeName) }
         Log.e(LOG_TAG, "runtime start failed runtimeName=$runtimeName", error)
@@ -311,13 +293,13 @@ object ThreadedRuntime {
     }
   }
 
-  private fun flushHeadlessTasks(runtimeName: String, host: ReactHost) {
+  private fun flushRuntimeFunctionRequests(runtimeName: String, host: ReactHost) {
     val requests =
         synchronized(lock) {
           if (!startedRuntimes.contains(runtimeName)) {
             return
           }
-          pendingHeadlessTasks.remove(runtimeName)?.toList().orEmpty()
+          pendingRuntimeFunctionRequests.remove(runtimeName)?.toList().orEmpty()
         }
     if (requests.isEmpty()) {
       return
@@ -326,39 +308,14 @@ object ThreadedRuntime {
     dispatchExecutor.execute {
       requests.forEach { request ->
         try {
-          invokeHeadlessTask(host, runtimeName, request)
+          invokeRuntimeFunctionRequest(host, runtimeName, request)
         } catch (error: Throwable) {
-          Log.e(
-              LOG_TAG,
-              "headless task dispatch failed runtimeName=$runtimeName taskName=${request.taskName}",
-              error,
-          )
-        }
-      }
-    }
-  }
-
-  private fun flushRuntimeFunctionCalls(runtimeName: String, host: ReactHost) {
-    val requests =
-        synchronized(lock) {
-          if (!startedRuntimes.contains(runtimeName)) {
-            return
+          request.callId?.let {
+            completeRuntimeFunctionCall(
+                it,
+                null,
+                "{\"message\":\"${jsonEscape(error.message ?: "Runtime function dispatch failed")}\"}")
           }
-          pendingRuntimeFunctionCalls.remove(runtimeName)?.toList().orEmpty()
-        }
-    if (requests.isEmpty()) {
-      return
-    }
-
-    dispatchExecutor.execute {
-      requests.forEach { request ->
-        try {
-          invokeRuntimeFunctionCall(host, runtimeName, request)
-        } catch (error: Throwable) {
-          completeRuntimeFunctionCall(
-              request.callId,
-              null,
-              "{\"message\":\"${jsonEscape(error.message ?: "Runtime function dispatch failed")}\"}")
           Log.e(
               LOG_TAG,
               "runtime function dispatch failed runtimeName=$runtimeName functionId=${request.functionId}",
@@ -369,43 +326,32 @@ object ThreadedRuntime {
     }
   }
 
-  private fun invokeHeadlessTask(
+  private fun invokeRuntimeFunctionRequest(
       host: ReactHost,
       runtimeName: String,
-      request: HeadlessTaskRequest,
+      request: RuntimeFunctionRequest,
   ) {
+    val callId = request.callId
     val args =
-        Arguments.fromJavaArgs(arrayOf(request.taskName, request.payloadJson, runtimeName))
+        if (callId == null) {
+          Arguments.fromJavaArgs(arrayOf(request.functionId, request.argsJson, runtimeName))
+        } else {
+          Arguments.fromJavaArgs(arrayOf(request.functionId, request.argsJson, callId, runtimeName))
+        }
             as NativeArray
     val method = resolveCallFunctionOnModuleMethod(host)
     val callTask =
-        method.invoke(host, HEADLESS_TASK_RUNNER_MODULE, "run", args)
+        method.invoke(
+            host,
+            RUNTIME_FUNCTION_RUNNER_MODULE,
+            if (callId == null) "schedule" else "run",
+            args)
             as? com.facebook.react.interfaces.TaskInterface<*>
     callTask?.waitForCompletion(5, TimeUnit.SECONDS)
     callTask?.getError()?.let { throw it }
     Log.i(
         LOG_TAG,
-        "headless task dispatched runtimeName=$runtimeName taskName=${request.taskName}")
-  }
-
-  private fun invokeRuntimeFunctionCall(
-      host: ReactHost,
-      runtimeName: String,
-      request: RuntimeFunctionCallRequest,
-  ) {
-    val args =
-        Arguments.fromJavaArgs(
-            arrayOf(request.functionId, request.argsJson, request.callId, runtimeName))
-            as NativeArray
-    val method = resolveCallFunctionOnModuleMethod(host)
-    val callTask =
-        method.invoke(host, RUNTIME_FUNCTION_RUNNER_MODULE, "run", args)
-            as? com.facebook.react.interfaces.TaskInterface<*>
-    callTask?.waitForCompletion(5, TimeUnit.SECONDS)
-    callTask?.getError()?.let { throw it }
-    Log.i(
-        LOG_TAG,
-        "runtime function dispatched runtimeName=$runtimeName functionId=${request.functionId} callId=${request.callId}")
+        "runtime function dispatched runtimeName=$runtimeName functionId=${request.functionId} callId=${callId ?: "<scheduled>"}")
   }
 
   private fun resolveCallFunctionOnModuleMethod(host: ReactHost): Method {

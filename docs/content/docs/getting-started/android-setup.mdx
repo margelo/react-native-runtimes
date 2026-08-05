@@ -90,34 +90,35 @@ for the full pattern.
 
 </Steps>
 
-## Native dispatch (C++ and Kotlin)
+## Native schedule (C++ and Kotlin)
 
-Dispatch headless tasks from native code when JS isn't a convenient caller —
-for example from a foreground service:
+Schedule runtime functions from native code when JS isn't a convenient caller —
+for example from a foreground service. Reference the function by its id and
+pass JSON-stringified arguments (a JSON array of the function's arguments):
 
 ```kotlin
-ThreadedRuntime.dispatchHeadlessTask(
+ThreadedRuntime.schedule(
   applicationContext,
   "background",
   "syncWorkspace",
-  """{"workspaceId":"engineering"}""",
+  """[{"workspaceId":"engineering"}]""",
 )
 ```
 
 ```cpp
 #include <nativecompose/threadedruntime/ThreadedRuntimeDispatcher.h>
 
-nativecompose::threadedruntime::dispatchHeadlessTask(
+nativecompose::threadedruntime::schedule(
   env,
   applicationContext,
   "background",
   "syncWorkspace",
-  R"({"workspaceId":"engineering"})"
+  R"([{"workspaceId":"engineering"}])"
 );
 ```
 
-Dispatch is fire-and-forget: the task is queued, the runtime is started if
-needed, and queued tasks are flushed once the runtime is ready.
+Scheduling is fire-and-forget: the work is queued, the runtime is started if
+needed, and queued work is flushed once the runtime is ready.
 
 ## Common issues
 

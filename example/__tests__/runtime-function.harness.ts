@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'react-native-harness';
-import { call, runtimeFunction } from '@react-native-runtimes/core';
+import { call, runtimeFunction, schedule } from '@react-native-runtimes/core';
 
 describe('runtimeFunction()', () => {
   it('returns a callable that invokes the wrapped fn in-place', () => {
@@ -10,6 +10,11 @@ describe('runtimeFunction()', () => {
   it('attaches a runOn method to the returned function', () => {
     const wrapped = runtimeFunction(() => 'ok');
     expect(typeof wrapped.runOn).toBe('function');
+  });
+
+  it('attaches a scheduleOn method to the returned function', () => {
+    const wrapped = runtimeFunction(() => {});
+    expect(typeof wrapped.scheduleOn).toBe('function');
   });
 
   it('does not attach __runtimeFunction metadata when no id is provided', () => {
@@ -41,6 +46,11 @@ describe('runtimeFunction.withId() / .named()', () => {
     expect(typeof fn.runOn).toBe('function');
   });
 
+  it('still exposes scheduleOn on the constructed function', () => {
+    const fn = runtimeFunction.withId('test/withId.scheduleOn', () => {});
+    expect(typeof fn.scheduleOn).toBe('function');
+  });
+
   it('treats withId(fn) with empty id as still annotated', () => {
     // Empty id is falsy in attachRuntimeFunction, so no metadata is attached.
     const fn = runtimeFunction.withId('', () => 0);
@@ -58,6 +68,20 @@ describe('call(fn).on(runtime)', () => {
   it('.on(runtime) returns an invoker function', () => {
     const fn = runtimeFunction(() => 1);
     const invoker = call(fn).on('any-runtime');
+    expect(typeof invoker).toBe('function');
+  });
+});
+
+describe('schedule(fn).on(runtime)', () => {
+  it('returns a builder with an .on(runtimeName) method', () => {
+    const fn = runtimeFunction(() => {});
+    const builder = schedule(fn);
+    expect(typeof builder.on).toBe('function');
+  });
+
+  it('.on(runtime) returns an invoker function', () => {
+    const fn = runtimeFunction(() => {});
+    const invoker = schedule(fn).on('any-runtime');
     expect(typeof invoker).toBe('function');
   });
 });

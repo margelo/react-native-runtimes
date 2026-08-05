@@ -1,8 +1,8 @@
 import {
   getCurrentRuntime,
   ThreadedRuntime,
-  registerThreadedHeadlessTask,
   runtimeFunction,
+  schedule,
   usingRuntime,
 } from '@react-native-runtimes/core';
 import { createSharedStore } from '@react-native-runtimes/state';
@@ -41,8 +41,8 @@ type TwoRuntimeBusinessTaskPayload = {
 export const TWO_RUNTIMES_BUSINESS_RUNTIME_NAME =
   'two-runtimes-business-runtime';
 
-const TWO_RUNTIMES_BUSINESS_TASK = 'twoRuntimes:startBusinessRuntime';
-const TWO_RUNTIMES_SYNC_TASK = 'twoRuntimes:syncNow';
+export const TWO_RUNTIMES_START_BUSINESS_FUNCTION =
+  'twoRuntimes:startBusinessRuntime';
 
 const initialBusinessStatus: TwoRuntimeBusinessStatus = {
   bootedAt: null,
@@ -153,9 +153,9 @@ async function publishBusinessSnapshot(
 
 let businessLoop: ReturnType<typeof setInterval> | null = null;
 
-registerThreadedHeadlessTask<TwoRuntimeBusinessTaskPayload>(
-  TWO_RUNTIMES_BUSINESS_TASK,
-  async ({ payload }) => {
+export const startTwoRuntimeBusinessLoop = runtimeFunction.named(
+  TWO_RUNTIMES_START_BUSINESS_FUNCTION,
+  async (payload: TwoRuntimeBusinessTaskPayload) => {
     await twoRuntimeArchitectureStore.hydrate();
 
     if (businessLoop) {
@@ -171,14 +171,6 @@ registerThreadedHeadlessTask<TwoRuntimeBusinessTaskPayload>(
         console.warn('[two-runtimes] background refresh failed', error);
       });
     }, 1250);
-  },
-);
-
-registerThreadedHeadlessTask<TwoRuntimeBusinessTaskPayload>(
-  TWO_RUNTIMES_SYNC_TASK,
-  async ({ payload }) => {
-    await twoRuntimeArchitectureStore.hydrate();
-    await publishBusinessSnapshot(payload.command ?? 'manual sync', payload);
   },
 );
 
@@ -211,12 +203,11 @@ export async function startTwoRuntimeBusinessRuntime(startedBy: string) {
   await ThreadedRuntime.prewarmBusinessRuntime(
     TWO_RUNTIMES_BUSINESS_RUNTIME_NAME,
   );
-  await ThreadedRuntime.runHeadlessTask(TWO_RUNTIMES_BUSINESS_TASK, {
-    runtimeName: TWO_RUNTIMES_BUSINESS_RUNTIME_NAME,
-    payload: {
-      enqueuedAt: Date.now(),
-      startedBy,
-    },
+  await schedule(startTwoRuntimeBusinessLoop).on(
+    TWO_RUNTIMES_BUSINESS_RUNTIME_NAME,
+  )({
+    enqueuedAt: Date.now(),
+    startedBy,
   });
 }
 

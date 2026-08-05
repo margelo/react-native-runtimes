@@ -23,7 +23,7 @@ const features = [
   },
   {
     icon: ZapIcon,
-    title: 'Prewarming and headless tasks',
+    title: 'Prewarming and background work',
     body: 'Spin up runtimes ahead of time, hydrate them in the background, and open them with zero perceived delay.',
   },
   {
@@ -191,7 +191,7 @@ export function ConversationPreview() {
             Built for production React Native apps
           </h2>
           <p className="max-w-2xl text-fd-muted-foreground">
-            Use it for chat screens, infinite lists, sync engines, headless
+            Use it for chat screens, infinite lists, sync engines, background
             hydration, or any work that should never compete with the main UI
             runtime.
           </p>

@@ -8,7 +8,7 @@ export const metadata = {
     template: '%s · React Native Runtimes',
   },
   description:
-    'Run React Native UI and state work across named JS runtimes. Threaded rendering, headless tasks, and shared native-backed state.',
+    'Run React Native UI and state work across named JS runtimes. Threaded rendering, background work, and shared native-backed state.',
 };
 
 export default function Layout({ children }: { children: ReactNode }) {

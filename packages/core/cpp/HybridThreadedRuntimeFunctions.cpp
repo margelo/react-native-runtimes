@@ -17,11 +17,19 @@
 
 namespace margelo::nitro::threadedruntime {
 
-std::shared_ptr<Promise<std::string>> HybridThreadedRuntimeFunctions::run(
+std::shared_ptr<Promise<std::string>> HybridThreadedRuntimeFunctions::call(
     const std::string& runtimeName,
     const std::string& functionId,
     const std::string& argsJson) {
-  return ::nativecompose::threadedruntime::callRuntimeFunctionOnRuntime(
+  return ::nativecompose::threadedruntime::callOnRuntime(
+      runtimeName, functionId, argsJson);
+}
+
+std::shared_ptr<Promise<void>> HybridThreadedRuntimeFunctions::schedule(
+    const std::string& runtimeName,
+    const std::string& functionId,
+    const std::string& argsJson) {
+  return ::nativecompose::threadedruntime::scheduleRuntimeFunctionOnRuntime(
       runtimeName, functionId, argsJson);
 }
 

@@ -1,42 +1,44 @@
 ---
 title: Native queued dispatch
-description: Dispatch a headless task from native before JS has a convenient caller — native queues it until the runtime is ready.
+description: Schedule a runtime function from native before JS has a convenient caller — native queues it until the runtime is ready.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 This can be called before the runtime is ready. Native queues the request and
-flushes it once startup completes.
+flushes it once startup completes. Native callers reference the runtime
+function by its id and pass JSON-stringified arguments (a JSON array of the
+function's arguments).
 
 ```kotlin
-ThreadedRuntime.dispatchHeadlessTask(
+ThreadedRuntime.schedule(
   applicationContext,
   "conversation-release-room-runtime",
-  "hydrateConversation",
-  """{"conversationId":"release-room","limit":50}""",
+  "messages.hydrateConversation",
+  """[{"conversationId":"release-room","limit":50}]""",
 )
 ```
 
 <Callout type="info" title="What 'queued' means">
-  If you call dispatch before the runtime exists, native creates it, runs the
+  If you call schedule before the runtime exists, native creates it, runs the
   JS bootstrap (including any `index.<runtime>.ts`), and then delivers the
-  queued task. The caller doesn't have to wait for any of that.
+  queued work. The caller doesn't have to wait for any of that.
 </Callout>
 
 ## When to use it
 
-- **Push notification handlers.** Dispatch a hydrate task on receive so the screen is ready when the user taps the notification.
-- **Foreground service work.** Kick off a sync task without bouncing through the main JS runtime.
+- **Push notification handlers.** Schedule a hydrate function on receive so the screen is ready when the user taps the notification.
+- **Foreground service work.** Kick off a sync function without bouncing through the main JS runtime.
 - **Native deep-link routers.** Pre-load the target screen's data before navigating in JS.
 
 ## Equivalent calls
 
 | Platform | Call |
 | --- | --- |
-| Android (Kotlin) | `ThreadedRuntime.dispatchHeadlessTask(context, runtimeName, taskName, payloadJson)` |
-| iOS (Swift) | `ThreadedRuntime.dispatchHeadlessTask(withRuntimeName:taskName:payloadJson:)` |
-| C++ (Android) | `nativecompose::threadedruntime::dispatchHeadlessTask(env, context, runtimeName, taskName, payloadJson)` |
-| C++ (iOS) | `nativecompose::threadedruntime::dispatchHeadlessTask(runtimeName, taskName, payloadJson)` |
+| Android (Kotlin) | `ThreadedRuntime.schedule(context, runtimeName, functionId, argsJson)` |
+| iOS (Swift) | `ThreadedRuntime.schedule(withRuntimeName:functionId:argsJson:)` |
+| C++ (Android) | `nativecompose::threadedruntime::schedule(env, context, runtimeName, functionId, argsJson)` |
+| C++ (iOS) | `nativecompose::threadedruntime::schedule(runtimeName, functionId, argsJson)` |
 
-See [Headless background runtime](/docs/threaded-runtime/headless-runtime) for
-the full native-dispatch reference.
+See [Background work with runtime functions](/docs/threaded-runtime/headless-runtime) for
+the full native-schedule reference.

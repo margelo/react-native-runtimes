@@ -213,7 +213,7 @@ export const fibonacci = runtimeFunction.named(
 - directive shortcut functions are rewritten to `const` aliases, so define them before calling them
 
 <Callout type="info" title="Fire-and-forget vs. await">
-  Use `ThreadedRuntime.runHeadlessTask(...)` when the caller only needs to
-  enqueue work and observe progress through shared state. Use a runtime
-  function when the caller needs the return value.
+  Use `schedule(fn).on(runtimeName)(...args)` when the caller only needs to
+  enqueue work and observe progress through shared state. Use
+  `call(fn).on(runtimeName)(...args)` when the caller needs the return value.
 </Callout>
