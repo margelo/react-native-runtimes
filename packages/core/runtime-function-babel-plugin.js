@@ -299,7 +299,10 @@ function createThreadedComponentDeclaration({
     t.variableDeclaration('const', [
       t.variableDeclarator(
         t.identifier(originalName),
-        t.callExpression(threadedComponentIdentifier, [
+        // cloneNode: the identifier node is shared across replacements; the
+        // same node object must never appear at multiple AST positions or
+        // import-reference rewriting only processes its first occurrence.
+        t.callExpression(t.cloneNode(threadedComponentIdentifier), [
           t.stringLiteral(threadedComponentIdValue),
           functionExpression,
         ]),
@@ -329,12 +332,20 @@ function createRuntimeShortcutStatements({
   functionExpression.returnType = functionNode.returnType;
   functionExpression.typeParameters = functionNode.typeParameters;
 
+  // cloneNode: callIdentifier / runtimeFunctionIdentifier are created once and
+  // used by every directive function in the file. Inserting the same node
+  // object at multiple AST positions breaks babel's reference tracking — the
+  // module transform then rewrites only the first occurrence and later
+  // functions reference undefined identifiers at runtime.
   const runtimeFunctionDeclaration = t.exportNamedDeclaration(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         t.identifier(runtimeFunctionName),
         t.callExpression(
-          t.memberExpression(runtimeFunctionIdentifier, t.identifier('withId')),
+          t.memberExpression(
+            t.cloneNode(runtimeFunctionIdentifier),
+            t.identifier('withId'),
+          ),
           [t.stringLiteral(runtimeFunctionIdValue), functionExpression],
         ),
       ),
@@ -346,7 +357,9 @@ function createRuntimeShortcutStatements({
       t.identifier(originalName),
       t.callExpression(
         t.memberExpression(
-          t.callExpression(callIdentifier, [t.identifier(runtimeFunctionName)]),
+          t.callExpression(t.cloneNode(callIdentifier), [
+            t.identifier(runtimeFunctionName),
+          ]),
           t.identifier('on'),
         ),
         [t.stringLiteral(runtimeName)],
