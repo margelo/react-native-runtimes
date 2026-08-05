@@ -1,6 +1,6 @@
 {
   "name": "@react-native-runtimes/core",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Run React Native components and functions in named secondary Hermes runtimes. Threaded surfaces, headless tasks, and cross-runtime function calls for React Native New Architecture.",
   "keywords": [
     "react-native",
