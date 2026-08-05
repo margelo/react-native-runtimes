@@ -1,6 +1,6 @@
 {
   "name": "@react-native-runtimes/state",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "Cross-runtime shared state for React Native multi-runtime apps. Zustand-style API backed by a process-wide C++ singleton — reads and writes from every Hermes runtime without a JS heap boundary.",
   "keywords": [
     "react-native",
