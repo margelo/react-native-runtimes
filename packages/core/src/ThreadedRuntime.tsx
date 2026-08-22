@@ -335,13 +335,59 @@ export function registerThreadedHeadlessTask<Payload = unknown>(
   threadedHeadlessTasks.set(name, task as ThreadedHeadlessTask<any>);
 }
 
+function createRuntimeFunctionLoadError(message: string, cause?: unknown) {
+  const error = Object.assign(new Error(message), {
+    name: 'RuntimeFunctionLoadError',
+  });
+  if (cause !== undefined) {
+    Object.defineProperty(error, 'cause', {
+      configurable: true,
+      value: cause,
+      writable: true,
+    });
+  }
+  return error;
+}
+
+function runRuntimeFunctionLoader(
+  functionId: string,
+  runtimeName: string,
+  loadFunction: RuntimeFunctionLoader,
+) {
+  let fn: RuntimeFunction<any>;
+  try {
+    fn = loadFunction();
+  } catch (cause) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    throw createRuntimeFunctionLoadError(
+      `Failed to load runtime function "${functionId}" on runtime ` +
+        `"${runtimeName}": ${causeMessage}`,
+      cause,
+    );
+  }
+
+  if (typeof fn !== 'function') {
+    throw createRuntimeFunctionLoadError(
+      `Failed to load runtime function "${functionId}" on runtime ` +
+        `"${runtimeName}": loader resolved to ${typeof fn}, not a function. ` +
+        'The module likely failed to initialize on this runtime; required ' +
+        'native packages may be missing.',
+    );
+  }
+
+  return fn;
+}
+
 export function registerRuntimeFunction<TFunction extends AnyFunction>(
   id: string,
   loadFunction: () => RuntimeFunction<TFunction>,
 ) {
   installRuntimeFunctionJsi();
-  runtimeFunctions.set(id, loadFunction as RuntimeFunctionLoader);
-  registerRuntimeFunctionBinding(id, loadFunction as RuntimeFunctionLoader);
+  const loader = loadFunction as RuntimeFunctionLoader;
+  runtimeFunctions.set(id, loader);
+  registerRuntimeFunctionBinding(id, () =>
+    runRuntimeFunctionLoader(id, currentRuntimeName(), loader),
+  );
 }
 
 function attachRuntimeFunction<TFunction extends AnyFunction>(
@@ -599,7 +645,7 @@ async function runRegisteredRuntimeFunction(
 ) {
   try {
     const result = await Promise.resolve(
-      callRegisteredRuntimeFunction(functionId, argsJson),
+      callRegisteredRuntimeFunction(functionId, argsJson, runtimeName),
     );
     await completeRuntimeFunctionCall(
       callId,
@@ -616,7 +662,10 @@ async function runRegisteredRuntimeFunction(
   }
 }
 
-function loadRegisteredRuntimeFunction(functionId: string) {
+function loadRegisteredRuntimeFunction(
+  functionId: string,
+  runtimeName: string,
+) {
   const cached = loadedRuntimeFunctions.get(functionId);
   if (cached) {
     return cached;
@@ -630,12 +679,16 @@ function loadRegisteredRuntimeFunction(functionId: string) {
     );
   }
 
-  const fn = loadFunction();
+  const fn = runRuntimeFunctionLoader(functionId, runtimeName, loadFunction);
   loadedRuntimeFunctions.set(functionId, fn);
   return fn;
 }
 
-function callRegisteredRuntimeFunction(functionId: string, argsJson: string) {
+function callRegisteredRuntimeFunction(
+  functionId: string,
+  argsJson: string,
+  runtimeName: string,
+) {
   installRuntimeFunctionJsi();
   const jsiCall = callRuntimeFunctionBinding;
   if (jsiCall) {
@@ -659,7 +712,7 @@ function callRegisteredRuntimeFunction(functionId: string, argsJson: string) {
     );
   }
 
-  return loadRegisteredRuntimeFunction(functionId)(...args);
+  return loadRegisteredRuntimeFunction(functionId, runtimeName)(...args);
 }
 
 function completeRuntimeFunctionCall(
